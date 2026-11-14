@@ -1,0 +1,30 @@
+{
+  "name": "wensi-essay-guide",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "文思 · 上海高考作文题库与自定义题目 AI 剖析",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "vite --config web/vite.config.js",
+    "build": "vite build --config web/vite.config.js",
+    "start": "node server/index.js",
+    "test": "node --test test/*.test.js",
+    "lint": "node scripts/check-syntax.mjs",
+    "smoke": "node scripts/smoke.mjs",
+    "browser-check": "node scripts/browser-check.mjs",
+    "check:docker": "node scripts/check-dockerfile.mjs"
+  },
+  "dependencies": {
+    "express": "^4.21.2"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.3.4",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-router-dom": "^6.28.2",
+    "vite": "^5.4.14"
+  }
+}

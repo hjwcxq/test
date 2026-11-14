@@ -2,7 +2,7 @@ import express from 'express';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { loadPrompts } from './data.js';
+import { REQUIRED_YEARS, loadJiangsuPrompts, loadPrompts } from './data.js';
 import { analyzeTopic } from './llm.js';
 import { MAX_TOPIC_LENGTH } from './analyzer.js';
 
@@ -27,6 +27,45 @@ function searchableText(prompt) {
   ]
     .join(' ')
     .toLowerCase();
+}
+
+function jiangsuSearchableText(prompt) {
+  return [
+    prompt.title,
+    prompt.province,
+    prompt.paper,
+    String(prompt.year),
+    prompt.material,
+    prompt.requirements,
+    prompt.concept,
+    prompt.source,
+    ...(prompt.tags || []),
+    ...(prompt.reviewPoints || []),
+    ...(prompt.writingTips || []),
+  ]
+    .join(' ')
+    .toLowerCase();
+}
+
+const YEAR_ERROR = {
+  error: {
+    code: 'INVALID_YEAR',
+    message: '年份参数无效，仅支持 2022、2023 或 2024 年。',
+  },
+};
+
+/**
+ * 解析 year 查询参数：缺省 / 空字符串表示不筛选；非四位数字或不在支持范围时
+ * 返回 invalid 标记。调用方据此返回友好的 400，而不是静默返回空列表。
+ */
+function parseYearFilter(value) {
+  if (value === undefined) return { active: false, year: null };
+  const raw = String(value).trim();
+  if (raw === '') return { active: false, year: null };
+  if (!/^\d{4}$/.test(raw)) return { active: true, year: null, invalid: true };
+  const year = Number(raw);
+  if (!REQUIRED_YEARS.includes(year)) return { active: true, year: null, invalid: true };
+  return { active: true, year };
 }
 
 /**
@@ -82,31 +121,44 @@ function health(_req, res) {
 }
 
 /** API 路由（会被同时挂载到 /api 与 /apps/p1/api）。 */
-export function createApiRouter(prompts) {
+export function createApiRouter(prompts, jiangsuPrompts = []) {
   const router = express.Router();
 
-  // 题目库列表：支持 year / keyword 查询，返回按年份升序的题目数组。
-  router.get('/prompts', (req, res) => {
-    let items = prompts;
-
-    const year = req.query.year;
-    if (year !== undefined && String(year).trim() !== '') {
-      const wanted = String(year).trim();
-      items = items.filter((p) => String(p.year) === wanted);
+  function filterList(items, req, res, buildHaystack) {
+    const parsedYear = parseYearFilter(req.query.year);
+    if (parsedYear.invalid) {
+      res.status(400).json(YEAR_ERROR);
+      return null;
     }
+
+    let result = items;
+    if (parsedYear.active) result = result.filter((p) => p.year === parsedYear.year);
 
     const keyword = typeof req.query.keyword === 'string' ? req.query.keyword.trim() : '';
     if (keyword) {
       const needle = keyword.toLowerCase();
-      items = items.filter((p) => searchableText(p).includes(needle));
+      result = result.filter((p) => buildHaystack(p).includes(needle));
     }
+    return result;
+  }
 
+  // 上海卷题目库：保持原有返回结构与排序，支持 year / keyword 查询。
+  router.get('/prompts', (req, res) => {
+    const items = filterList(prompts, req, res, searchableText);
+    if (!items) return undefined;
     return res.json(items);
   });
 
-  // 单题详情：不存在返回结构化 404。
+  // 江苏高考作文题库：独立数据集，不覆盖上海卷；支持 year / keyword 查询。
+  router.get('/jiangsu/prompts', (req, res) => {
+    const items = filterList(jiangsuPrompts, req, res, jiangsuSearchableText);
+    if (!items) return undefined;
+    return res.json(items);
+  });
+
+  // 单题详情：两套题库统一按 id 查找，不存在返回结构化 404。
   router.get('/prompts/:id', (req, res) => {
-    const item = prompts.find((p) => p.id === req.params.id);
+    const item = [...prompts, ...jiangsuPrompts].find((p) => p.id === req.params.id);
     if (!item) {
       return res.status(404).json({
         error: {
@@ -155,15 +207,16 @@ export function createApiRouter(prompts) {
 
 /** 构建 Express 应用。options.prompts 可注入数据，便于测试。 */
 export function createApp(options = {}) {
-  // 启动时即校验题目数据：结构缺失或占位文本会直接抛错，不启动服务。
+  // 启动时即校验两套题目数据：结构缺失或占位文本会直接抛错，不启动服务。
   const prompts = options.prompts || loadPrompts();
+  const jiangsuPrompts = options.jiangsuPrompts || loadJiangsuPrompts();
   const app = express();
   app.disable('x-powered-by');
 
   // 请求体大小限制：防止超大输入，也保证超长题目能进入业务校验而非直接 413。
   app.use(express.json({ limit: '128kb', strict: true }));
 
-  const api = createApiRouter(prompts);
+  const api = createApiRouter(prompts, jiangsuPrompts);
   const apiNotFound = (_req, res) =>
     res.status(404).json({
       error: { code: 'API_NOT_FOUND', message: '接口不存在，请检查请求路径后重试。' },

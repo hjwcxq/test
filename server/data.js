@@ -4,8 +4,11 @@ import { fileURLToPath } from 'node:url';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 export const DATA_PATH = path.resolve(here, '../data/prompts.json');
+export const JIANGSU_DATA_PATH = path.resolve(here, '../data/jiangsu-prompts.json');
 
 export const REQUIRED_YEARS = [2022, 2023, 2024];
+export const JIANGSU_PROVINCE = '江苏';
+export const JIANGSU_PAPER = '新课标I卷';
 export const PLACEHOLDER_RE = /TODO|待补充|占位文本|示例文本|placeholder|lorem ipsum|XXX/i;
 
 function fail(message) {
@@ -126,4 +129,99 @@ export function loadPrompts(filePath = DATA_PATH) {
     throw new Error(`[data/prompts.json 读取失败] ${error.message}`);
   }
   return validateDataset(parsed);
+}
+
+function failJiangsu(message) {
+  throw new Error(`[data/jiangsu-prompts.json 校验失败] ${message}`);
+}
+
+function assertJiangsuArray(value, minLength, label) {
+  if (!Array.isArray(value) || value.length < minLength) {
+    failJiangsu(`${label} 必须是至少 ${minLength} 项的数组`);
+  }
+}
+
+/**
+ * 校验江苏高考作文题库：每年恰好 1 条，字段完整，且不与已有题库（上海卷）
+ * 发生 id 或“年份 + 标题”重复。数据错误在服务启动阶段即暴露。
+ */
+export function validateJiangsuDataset(raw, options = {}) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    failJiangsu('根节点必须是对象');
+  }
+  assertJiangsuArray(raw.prompts, REQUIRED_YEARS.length, 'prompts');
+
+  const existingPrompts = Array.isArray(options.existingPrompts) ? options.existingPrompts : [];
+  const existingIds = new Set(existingPrompts.map((p) => p.id));
+  const existingTitles = new Set(existingPrompts.map((p) => `${p.year}|${p.title}`));
+
+  const seenIds = new Set();
+  const seenYears = new Set();
+  const prompts = [];
+
+  for (const [index, p] of raw.prompts.entries()) {
+    const label = `prompts[${index}]`;
+    if (!p || typeof p !== 'object' || Array.isArray(p)) failJiangsu(`${label} 必须是对象`);
+
+    for (const field of ['id', 'province', 'paper', 'title', 'material', 'requirements', 'concept', 'source']) {
+      if (!isText(p[field])) failJiangsu(`${label}.${field} 必须是非空且非占位的中文文本`);
+    }
+
+    if (!Number.isInteger(p.year)) failJiangsu(`${label}.year 必须是整数`);
+    if (!REQUIRED_YEARS.includes(p.year)) {
+      failJiangsu(`${label}.year 为 ${p.year}，只允许 ${REQUIRED_YEARS.join('/')}`);
+    }
+    if (p.province !== JIANGSU_PROVINCE) failJiangsu(`${label}.province 必须是「${JIANGSU_PROVINCE}」`);
+    if (p.paper !== JIANGSU_PAPER) failJiangsu(`${label}.paper 必须是「${JIANGSU_PAPER}」`);
+    if (seenIds.has(p.id)) failJiangsu(`题目 id 重复：${p.id}`);
+    if (existingIds.has(p.id)) failJiangsu(`题目 id 与原有题库重复：${p.id}`);
+    if (seenYears.has(p.year)) failJiangsu(`年份重复：${p.year}`);
+    if (existingTitles.has(`${p.year}|${p.title}`)) {
+      failJiangsu(`题目与原有题库重复：${p.year} ${p.title}`);
+    }
+    seenIds.add(p.id);
+    seenYears.add(p.year);
+
+    assertJiangsuArray(p.tags, 1, `${label}.tags`);
+    p.tags.forEach((tag, i) => {
+      if (!isText(tag)) failJiangsu(`${label}.tags[${i}] 不能为空`);
+    });
+
+    assertJiangsuArray(p.reviewPoints, 2, `${label}.reviewPoints`);
+    p.reviewPoints.forEach((point, i) => {
+      if (!isText(point)) failJiangsu(`${label}.reviewPoints[${i}] 不能为空`);
+    });
+
+    assertJiangsuArray(p.writingTips, 2, `${label}.writingTips`);
+    p.writingTips.forEach((tip, i) => {
+      if (!isText(tip)) failJiangsu(`${label}.writingTips[${i}] 不能为空`);
+    });
+
+    if (p.concept.length < 30) failJiangsu(`${label}.concept 需要完整的审题立意说明`);
+    if (p.source.length < 10) failJiangsu(`${label}.source 需要可核验的来源说明`);
+
+    prompts.push(p);
+  }
+
+  for (const year of REQUIRED_YEARS) {
+    if (!seenYears.has(year)) failJiangsu(`缺少 ${year} 年江苏新课标I卷题目`);
+  }
+
+  return prompts.sort((a, b) => a.year - b.year);
+}
+
+/** 读取并校验江苏题库，返回按年份升序排序的题目数组。 */
+export function loadJiangsuPrompts(filePath = JIANGSU_DATA_PATH) {
+  let parsed;
+  try {
+    parsed = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+  } catch (error) {
+    throw new Error(`[data/jiangsu-prompts.json 读取失败] ${error.message}`);
+  }
+  return validateJiangsuDataset(parsed, { existingPrompts: loadPrompts() });
+}
+
+/** 合并两套题库，供详情页按 id 统一查找。 */
+export function loadAllPrompts() {
+  return [...loadPrompts(), ...loadJiangsuPrompts()];
 }

@@ -57,7 +57,7 @@ export default function App() {
             <span className="brand-seal" aria-hidden="true">文</span>
             <span className="brand-text">
               <strong>文思</strong>
-              <small>上海高考作文指导</small>
+              <small>高考作文指导</small>
             </span>
           </Link>
           <nav className="main-nav" aria-label="主导航">
@@ -86,7 +86,7 @@ export default function App() {
       <footer className="site-footer">
         <div className="container footer-inner">
           <span>文思 · 把一道题目，拆成可落笔的思路</span>
-          <span>内置 2022—2024 上海卷真题 · 本地结构化剖析引擎 · 结果仅当前会话可见</span>
+          <span>内置 2022—2024 上海卷与江苏新课标I卷真题 · 本地结构化剖析引擎 · 结果仅当前会话可见</span>
         </div>
       </footer>
     </div>

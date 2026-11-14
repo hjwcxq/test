@@ -2,7 +2,76 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { getPrompt } from '../api.js';
 import { Badge, CopyButton, ErrorState, LoadingState, Section } from '../components.jsx';
-import { promptToText } from '../exportText.js';
+import { jiangsuPromptToText, promptToText } from '../exportText.js';
+
+function JiangsuDetail({ prompt }) {
+  return (
+    <div className="page detail-page">
+      <nav className="breadcrumb" aria-label="面包屑">
+        <Link to="/">题目库</Link>
+        <span aria-hidden="true">/</span>
+        <span>江苏高考作文</span>
+        <span aria-hidden="true">/</span>
+        <span>{prompt.year} 年 {prompt.title}</span>
+      </nav>
+
+      <header className="detail-head">
+        <div>
+          <div className="detail-badges">
+            <span className="year-seal">{prompt.year}</span>
+            <Badge tone="soft">{prompt.province}</Badge>
+            <Badge tone="soft">{prompt.paper}</Badge>
+            <Badge tone="seal">{prompt.title}</Badge>
+          </div>
+          <h1>{prompt.title} · 审题立意与写作提示</h1>
+          <p className="muted">江苏语文高考采用新课标I卷；以下为指导内容，不代表官方评分标准。</p>
+        </div>
+        <div className="detail-actions">
+          <CopyButton text={jiangsuPromptToText(prompt)} label="复制审题与写作提示" />
+        </div>
+      </header>
+
+      <Section index={1} title="题目材料" description="先通读材料，圈出核心概念与限制条件。">
+        <blockquote className="original-text material-text">{prompt.material}</blockquote>
+      </Section>
+
+      <Section index={2} title="写作要求" description="写作指令决定文体、角度与字数边界，落笔前务必确认。">
+        <p className="requirements-text">{prompt.requirements}</p>
+      </Section>
+
+      <Section index={3} title="审题立意" description="先解释题目在问什么，再确定文章的中心判断。">
+        <p className="lead-text">{prompt.concept}</p>
+        <ol className="number-list">
+          {(prompt.reviewPoints || []).map((point, i) => <li key={i}>{point}</li>)}
+        </ol>
+      </Section>
+
+      <Section index={4} title="写作提示" description="按提示组织段落与论证，避免只罗列例子或空喊口号。">
+        <div className="outline-list">
+          {(prompt.writingTips || []).map((tip, i) => (
+            <div className="outline-row" key={i}>
+              <div className="outline-head">
+                <span className="outline-no">{String(i + 1).padStart(2, '0')}</span>
+                <h3>写作提示 {i + 1}</h3>
+              </div>
+              <p>{tip}</p>
+            </div>
+          ))}
+        </div>
+      </Section>
+
+      <Section index={5} title="来源" description="题目材料与写作要求依据公开试题文本整理。">
+        <p className="source-note">{prompt.source}</p>
+        <p className="muted small">江苏语文高考采用新课标I卷。本页审题与写作提示为学习指导内容，如与官方文本有个别文字差异，以官方发布为准。</p>
+      </Section>
+
+      <footer className="detail-foot">
+        <Link className="btn btn-outline" to="/">← 返回题目库</Link>
+        <Link className="btn btn-primary" to="/analyze">剖析我自己的题目 →</Link>
+      </footer>
+    </div>
+  );
+}
 
 export default function Detail() {
   const { id } = useParams();
@@ -41,6 +110,10 @@ export default function Detail() {
   }
 
   if (!prompt) return null;
+
+  if (prompt.province === '江苏') {
+    return <JiangsuDetail prompt={prompt} />;
+  }
 
   return (
     <div className="page detail-page">

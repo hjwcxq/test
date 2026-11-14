@@ -44,6 +44,10 @@ export function getPrompts() {
   return request('/api/prompts');
 }
 
+export function getJiangsuPrompts() {
+  return request('/api/jiangsu/prompts');
+}
+
 export function getPrompt(id) {
   return request(`/api/prompts/${encodeURIComponent(id)}`);
 }

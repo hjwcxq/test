@@ -31,6 +31,7 @@ assert.match(dockerfile, /CMD\s+\[?\s*"node"\s*,\s*"server\/index\.js"/, 'CMD �
 assert.match(dockerfile, /npm\s+run\s+build/, '构建阶段必须构建前端产物');
 assert.match(dockerfile, /--omit=dev|npm\s+ci\s+--omit=dev|NODE_ENV=production/, '运行阶段应只安装生产依赖');
 assert.match(dockerfile, /COPY\s+.*dist/, '运行阶段必须复制前端构建产物');
+assert.match(dockerfile, /COPY\s+data\s+\.\/data/, '运行阶段必须复制 data 目录（含江苏题库）');
 assert.match(dockerfile, /ENV\s+PORT=8080/, '容器默认端口必须是 8080');
 assert.match(dockerfile, /HEALTHCHECK/, '应声明 HEALTHCHECK');
 assert.match(dockerignore, /node_modules/, '.dockerignore 必须排除 node_modules');

@@ -53,6 +53,34 @@ export function resultToText(result) {
   return lines.join('\n').trim() + '\n';
 }
 
+export function jiangsuPromptToText(prompt) {
+  if (!prompt) return '';
+  const lines = [];
+  const push = (...items) => lines.push(...items, '');
+
+  push('【文思 · 江苏高考作文审题指导】');
+  push(`${prompt.year} 年 ${prompt.province}｜${prompt.paper}｜${prompt.title}`);
+
+  push('—— 题目材料 ——');
+  push(prompt.material);
+
+  push('—— 写作要求 ——');
+  push(prompt.requirements);
+
+  push('—— 审题立意 ——');
+  push(prompt.concept);
+  for (const point of prompt.reviewPoints || []) push(`· ${point}`);
+
+  push('—— 写作提示 ——');
+  (prompt.writingTips || []).forEach((tip, i) => push(`${i + 1}. ${tip}`));
+
+  push('—— 来源 ——');
+  push(prompt.source);
+
+  push('说明：审题与写作提示为学习指导内容，不代表官方评分标准。');
+  return lines.join('\n').trim() + '\n';
+}
+
 export function promptToText(prompt) {
   if (!prompt) return '';
   const lines = [];

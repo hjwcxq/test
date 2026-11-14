@@ -163,6 +163,52 @@ async function main() {
       assert.ok((await missing.json()).error.code);
     });
 
+    await check('GET /api/jiangsu/prompts 返回江苏 2022/2023/2024 三年数据（根路径与前缀）', async () => {
+      for (const prefix of ['', '/apps/p1']) {
+        const r = await fetch(`${base}${prefix}/api/jiangsu/prompts`);
+        assert.equal(r.status, 200);
+        const items = await r.json();
+        assert.deepEqual(items.map((p) => p.year), [2022, 2023, 2024]);
+        for (const p of items) {
+          assert.equal(p.province, '江苏');
+          assert.equal(p.paper, '新课标I卷');
+          assert.ok(p.material && p.requirements && p.concept && p.source);
+          assert.ok(p.reviewPoints.length >= 2 && p.writingTips.length >= 2);
+        }
+      }
+    });
+
+    await check('江苏题库年份筛选严格一致，关键词命中对应年份', async () => {
+      for (const year of [2022, 2023, 2024]) {
+        const items = await (await fetch(`${base}/api/jiangsu/prompts?year=${year}`)).json();
+        assert.equal(items.length, 1);
+        assert.equal(items[0].year, year);
+      }
+      for (const [keyword, year] of [['本手', 2022], ['故事', 2023], ['人工智能', 2024]]) {
+        const items = await (
+          await fetch(`${base}/api/jiangsu/prompts?keyword=${encodeURIComponent(keyword)}`)
+        ).json();
+        assert.equal(items.length, 1, `关键词「${keyword}」应只命中 1 条`);
+        assert.equal(items[0].year, year);
+      }
+    });
+
+    await check('非法年份参数返回 400，江苏题目详情可读，不存在 id 返回 404', async () => {
+      const invalid = await fetch(`${base}/api/jiangsu/prompts?year=2021`);
+      assert.equal(invalid.status, 400);
+      assert.equal((await invalid.json()).error.code, 'INVALID_YEAR');
+
+      const detail = await fetch(`${base}/apps/p1/api/prompts/jiangsu-2022`);
+      assert.equal(detail.status, 200);
+      const body = await detail.json();
+      assert.equal(body.title, '本手、妙手、俗手');
+      assert.ok(body.material.includes('本手') && body.source.includes('2022'));
+
+      const missing = await fetch(`${base}/api/prompts/jiangsu-9999`);
+      assert.equal(missing.status, 404);
+      assert.equal((await missing.json()).error.code, 'PROMPT_NOT_FOUND');
+    });
+
     const validTopic = '一个人乐意去探索陌生世界，仅仅是因为好奇心吗？';
 
     await check('POST /api/analyze 合法题目（根路径与前缀）返回 200 且字段完整', async () => {

@@ -1,38 +1,101 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
-import { getPrompts } from '../api.js';
+import { Link, useSearchParams } from 'react-router-dom';
+import { getJiangsuPrompts, getPrompts } from '../api.js';
 import { Badge, Card, EmptyState, ErrorState, LoadingState } from '../components.jsx';
 
 const YEAR_OPTIONS = [null, 2022, 2023, 2024];
+
+const REGIONS = {
+  shanghai: {
+    key: 'shanghai',
+    tab: '上海卷',
+    tabHint: '2022—2024 真题',
+    eyebrow: '题库 · 上海卷',
+    title: '上海卷高考作文真题',
+    description: '点击卡片查看完整解题内容；支持按年份与关键词检索。',
+    searchPlaceholder: '检索题目原文、关键词或立意…',
+  },
+  jiangsu: {
+    key: 'jiangsu',
+    tab: '江苏高考作文',
+    tabHint: '新课标I卷 · 2022—2024',
+    eyebrow: '题库 · 江苏高考作文',
+    title: '江苏高考作文真题',
+    description:
+      '江苏语文高考采用新课标I卷，收录 2022—2024 年真题材料、写作要求、审题立意与写作提示；支持按年份与关键词检索。',
+    searchPlaceholder: '检索材料、审题立意或写作提示…',
+  },
+};
+
+function parseLibraryParams(params) {
+  let region = params.get('region');
+  let notice = '';
+
+  if (region && !REGIONS[region]) {
+    notice = '题库参数无效，已为你显示上海卷题目。';
+    region = 'shanghai';
+  }
+  if (!region) region = 'shanghai';
+
+  let year = null;
+  const rawYear = params.get('year');
+  if (rawYear !== null && String(rawYear).trim() !== '') {
+    const parsed = Number(String(rawYear).trim());
+    if (YEAR_OPTIONS.includes(parsed)) {
+      year = parsed;
+    } else {
+      notice = '年份参数无效，已为你显示全部年份；可选 2022、2023 或 2024 年。';
+    }
+  }
+
+  return { region, year, notice };
+}
 
 function haystack(prompt) {
   return [
     prompt.title,
     prompt.region,
+    prompt.province,
+    prompt.paper,
     String(prompt.year),
     prompt.original,
+    prompt.material,
+    prompt.requirements,
     prompt.overview,
+    prompt.concept,
+    prompt.conceptRelations,
+    prompt.source,
     ...(prompt.tags || []),
+    ...(prompt.reviewPoints || []),
+    ...(prompt.writingTips || []),
     ...(prompt.keywords || []).map((k) => k.term),
     ...(prompt.angles || []).map((a) => a.title),
   ]
+    .filter(Boolean)
     .join(' ')
     .toLowerCase();
 }
 
 export default function Home() {
-  const [prompts, setPrompts] = useState([]);
+  const [searchParams] = useSearchParams();
+  const [initialParams] = useState(() => parseLibraryParams(searchParams));
+
+  const [shanghaiPrompts, setShanghaiPrompts] = useState([]);
+  const [jiangsuPrompts, setJiangsuPrompts] = useState([]);
   const [status, setStatus] = useState('loading');
   const [error, setError] = useState('');
-  const [year, setYear] = useState(null);
+  const [region, setRegion] = useState(initialParams.region);
+  const [year, setYear] = useState(initialParams.year);
   const [keyword, setKeyword] = useState('');
+  const [paramNotice, setParamNotice] = useState(initialParams.notice);
 
   const load = useCallback(async () => {
     setStatus('loading');
     setError('');
     try {
-      const data = await getPrompts();
-      setPrompts(Array.isArray(data) ? data : []);
+      const [shanghaiData, jiangsuData] = await Promise.all([getPrompts(), getJiangsuPrompts()]);
+      setShanghaiPrompts(Array.isArray(shanghaiData) ? shanghaiData : []);
+      setJiangsuPrompts(Array.isArray(jiangsuData) ? jiangsuData : []);
       setStatus('ready');
     } catch (err) {
       setError(err?.message || '题目库加载失败，请稍后重试。');
@@ -43,6 +106,9 @@ export default function Home() {
   useEffect(() => {
     load();
   }, [load]);
+
+  const active = REGIONS[region];
+  const prompts = region === 'jiangsu' ? jiangsuPrompts : shanghaiPrompts;
 
   const filtered = useMemo(() => {
     const needle = keyword.trim().toLowerCase();
@@ -55,15 +121,22 @@ export default function Home() {
 
   const hasFilter = Boolean(year || keyword.trim());
 
+  const switchRegion = (nextRegion) => {
+    if (nextRegion === region) return;
+    setRegion(nextRegion);
+    setKeyword('');
+    setParamNotice('');
+  };
+
   return (
     <div className="page home-page">
       <section className="hero">
         <div className="hero-mark" aria-hidden="true">文</div>
         <div className="hero-copy">
-          <p className="eyebrow">上海高考作文 · 思路研习</p>
+          <p className="eyebrow">高考作文 · 思路研习</p>
           <h1>把一道题目，拆成可落笔的思路</h1>
           <p className="hero-lead">
-            收录 2022—2024 年上海卷高考作文真题，逐题给出审题要点、关键词拆解、分层立意、
+            收录 2022—2024 年上海卷与江苏新课标I卷高考作文真题，逐题给出审题要点、关键词拆解、分层立意、
             结构框架与素材方向；也可以粘贴任意作文题，即时得到题型判定、立意分层与分段提纲。
           </p>
           <div className="hero-actions">
@@ -77,7 +150,7 @@ export default function Home() {
       <section className="feature-row" aria-label="产品能力">
         <Card className="feature-card">
           <h3>真题精解</h3>
-          <p>三年上海卷逐题拆解：从「审题要点」到「常见偏题误区与升格建议」，每一栏都可直接使用。</p>
+          <p>上海卷与江苏新课标I卷逐题拆解：从「审题要点」到「审题立意」，每一栏都可直接使用。</p>
         </Card>
         <Card className="feature-card">
           <h3>任意题目剖析</h3>
@@ -90,14 +163,44 @@ export default function Home() {
       </section>
 
       <section className="library" id="library">
+        <div className="region-tabs" role="group" aria-label="选择题库">
+          {Object.values(REGIONS).map((item) => {
+            const count = item.key === 'jiangsu' ? jiangsuPrompts.length : shanghaiPrompts.length;
+            return (
+              <button
+                key={item.key}
+                type="button"
+                className={`region-tab ${region === item.key ? 'region-tab-active' : ''}`}
+                onClick={() => switchRegion(item.key)}
+                aria-pressed={region === item.key}
+              >
+                <span className="region-tab-label">{item.tab}</span>
+                <span className="region-tab-hint">
+                  {item.tabHint}
+                  {count ? ` · ${count} 题` : ''}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+
         <div className="library-head">
           <div>
-            <p className="eyebrow">题库 · 2022—2024</p>
-            <h2>上海卷高考作文真题</h2>
-            <p className="muted">点击卡片查看完整解题内容；支持按年份与关键词检索。</p>
+            <p className="eyebrow">{active.eyebrow}</p>
+            <h2>{active.title}</h2>
+            <p className="muted">{active.description}</p>
           </div>
           <Badge tone="seal">共 {prompts.length || 3} 题</Badge>
         </div>
+
+        {paramNotice && (
+          <div className="notice-banner" role="alert">
+            <span>{paramNotice}</span>
+            <button type="button" className="notice-close" onClick={() => setParamNotice('')} aria-label="关闭提示">
+              ×
+            </button>
+          </div>
+        )}
 
         <div className="filters">
           <div className="year-filters" role="group" aria-label="按年份筛选">
@@ -118,7 +221,7 @@ export default function Home() {
             <input
               type="search"
               value={keyword}
-              placeholder="检索题目原文、关键词或立意…"
+              placeholder={active.searchPlaceholder}
               onChange={(e) => setKeyword(e.target.value)}
             />
             {keyword && (
@@ -157,25 +260,33 @@ export default function Home() {
 
         {status === 'ready' && filtered.length > 0 && (
           <div className="card-grid">
-            {filtered.map((p) => (
-              <Link className="prompt-card card" to={`/prompts/${p.id}`} key={p.id}>
-                <div className="prompt-card-top">
-                  <span className="year-seal">{p.year}</span>
-                  <Badge tone="soft">{p.region}</Badge>
-                </div>
-                <h3>{p.title}</h3>
-                <p className="prompt-excerpt">{p.original}</p>
-                <div className="tag-row">
-                  {(p.tags || []).slice(0, 4).map((tag) => (
-                    <span className="tag" key={tag}>{tag}</span>
-                  ))}
-                </div>
-                <div className="prompt-card-foot">
-                  <span>{p.angles?.length || 0} 个立意角度 · {p.structure?.sections?.length || 0} 段结构框架</span>
-                  <span className="arrow" aria-hidden="true">查看解题 →</span>
-                </div>
-              </Link>
-            ))}
+            {filtered.map((p) => {
+              const isJiangsu = region === 'jiangsu';
+              const excerpt = isJiangsu ? p.material : p.original;
+              const badgeText = isJiangsu ? `${p.province} · ${p.paper}` : p.region;
+              const footText = isJiangsu
+                ? `${p.reviewPoints?.length || 0} 条审题要点 · ${p.writingTips?.length || 0} 条写作提示`
+                : `${p.angles?.length || 0} 个立意角度 · ${p.structure?.sections?.length || 0} 段结构框架`;
+              return (
+                <Link className="prompt-card card" to={`/prompts/${p.id}`} key={p.id}>
+                  <div className="prompt-card-top">
+                    <span className="year-seal">{p.year}</span>
+                    <Badge tone="soft">{badgeText}</Badge>
+                  </div>
+                  <h3>{p.title}</h3>
+                  <p className="prompt-excerpt">{excerpt}</p>
+                  <div className="tag-row">
+                    {(p.tags || []).slice(0, 4).map((tag) => (
+                      <span className="tag" key={tag}>{tag}</span>
+                    ))}
+                  </div>
+                  <div className="prompt-card-foot">
+                    <span>{footText}</span>
+                    <span className="arrow" aria-hidden="true">查看解题 →</span>
+                  </div>
+                </Link>
+              );
+            })}
           </div>
         )}
       </section>

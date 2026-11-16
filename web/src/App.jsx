@@ -86,7 +86,7 @@ export default function App() {
       <footer className="site-footer">
         <div className="container footer-inner">
           <span>文思 · 把一道题目，拆成可落笔的思路</span>
-          <span>内置 2022—2024 上海卷与江苏新课标I卷真题 · 本地结构化剖析引擎 · 结果仅当前会话可见</span>
+          <span>内置 2022—2024 上海卷、江苏与浙江高考作文真题 · 本地结构化剖析引擎 · 结果仅当前会话可见</span>
         </div>
       </footer>
     </div>

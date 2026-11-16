@@ -209,6 +209,56 @@ async function main() {
       assert.equal((await missing.json()).error.code, 'PROMPT_NOT_FOUND');
     });
 
+    await check('GET /api/zhejiang/prompts 返回浙江 2022/2023/2024 三年数据（根路径与前缀）', async () => {
+      for (const prefix of ['', '/apps/p1']) {
+        const r = await fetch(`${base}${prefix}/api/zhejiang/prompts`);
+        assert.equal(r.status, 200);
+        const items = await r.json();
+        assert.deepEqual(items.map((p) => p.year), [2022, 2023, 2024]);
+        for (const p of items) {
+          assert.equal(p.province, '浙江');
+          assert.ok(p.paper === '浙江卷' || p.paper === '新课标I卷');
+          assert.ok(p.material && p.requirements && p.concept && p.source);
+          assert.ok(p.keywords.length >= 3 && p.angles.length >= 3);
+          assert.ok(p.structure.sections.length >= 4);
+          assert.ok(p.materials.length >= 2 && p.writingTips.length >= 2);
+          assert.ok(p.pitfalls.length >= 2 && p.scoringPoints.length >= 3);
+        }
+      }
+    });
+
+    await check('浙江题库年份筛选严格一致，关键词命中对应年份', async () => {
+      for (const year of [2022, 2023, 2024]) {
+        const items = await (await fetch(`${base}/api/zhejiang/prompts?year=${year}`)).json();
+        assert.equal(items.length, 1);
+        assert.equal(items[0].year, year);
+      }
+      for (const [keyword, year] of [['徐枫灿', 2022], ['好的故事', 2023], ['人工智能', 2024]]) {
+        const items = await (
+          await fetch(`${base}/api/zhejiang/prompts?keyword=${encodeURIComponent(keyword)}`)
+        ).json();
+        assert.equal(items.length, 1, `关键词「${keyword}」应只命中 1 条`);
+        assert.equal(items[0].year, year);
+      }
+    });
+
+    await check('浙江题目详情可读（含全部指导字段），不存在 id 返回 404', async () => {
+      for (const url of ['/api/prompts/zhejiang-2022', '/apps/p1/api/prompts/zhejiang-2024']) {
+        const r = await fetch(`${base}${url}`);
+        assert.equal(r.status, 200);
+        const body = await r.json();
+        assert.equal(body.province, '浙江');
+        assert.ok(body.material && body.requirements && body.concept);
+        assert.ok(body.keywords.length >= 3 && body.angles.length >= 3);
+        assert.ok(body.structure.sections.length >= 4 && body.materials.length >= 2);
+        assert.ok(body.pitfalls.length >= 2 && body.scoringPoints.length >= 3);
+        assert.ok(body.source.includes(String(body.year)) && body.source.includes('浙江'));
+      }
+      const missing = await fetch(`${base}/api/prompts/zhejiang-9999`);
+      assert.equal(missing.status, 404);
+      assert.equal((await missing.json()).error.code, 'PROMPT_NOT_FOUND');
+    });
+
     const validTopic = '一个人乐意去探索陌生世界，仅仅是因为好奇心吗？';
 
     await check('POST /api/analyze 合法题目（根路径与前缀）返回 200 且字段完整', async () => {

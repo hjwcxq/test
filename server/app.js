@@ -2,7 +2,7 @@ import express from 'express';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { REQUIRED_YEARS, loadJiangsuPrompts, loadPrompts } from './data.js';
+import { REQUIRED_YEARS, loadJiangsuPrompts, loadPrompts, loadZhejiangPrompts } from './data.js';
 import { analyzeTopic } from './llm.js';
 import { MAX_TOPIC_LENGTH } from './analyzer.js';
 
@@ -42,6 +42,27 @@ function jiangsuSearchableText(prompt) {
     ...(prompt.tags || []),
     ...(prompt.reviewPoints || []),
     ...(prompt.writingTips || []),
+  ]
+    .join(' ')
+    .toLowerCase();
+}
+
+function zhejiangSearchableText(prompt) {
+  return [
+    prompt.title,
+    prompt.province,
+    prompt.paper,
+    String(prompt.year),
+    prompt.material,
+    prompt.requirements,
+    prompt.concept,
+    prompt.source,
+    ...(prompt.tags || []),
+    ...(prompt.reviewPoints || []),
+    ...(prompt.writingTips || []),
+    ...(prompt.keywords || []).map((k) => `${k.term} ${k.analysis}`),
+    ...(prompt.angles || []).map((a) => `${a.title} ${a.description}`),
+    ...(prompt.scoringPoints || []),
   ]
     .join(' ')
     .toLowerCase();
@@ -121,7 +142,7 @@ function health(_req, res) {
 }
 
 /** API 路由（会被同时挂载到 /api 与 /apps/p1/api）。 */
-export function createApiRouter(prompts, jiangsuPrompts = []) {
+export function createApiRouter(prompts, jiangsuPrompts = [], zhejiangPrompts = []) {
   const router = express.Router();
 
   function filterList(items, req, res, buildHaystack) {
@@ -156,9 +177,16 @@ export function createApiRouter(prompts, jiangsuPrompts = []) {
     return res.json(items);
   });
 
-  // 单题详情：两套题库统一按 id 查找，不存在返回结构化 404。
+  // 浙江高考作文题库：独立数据集，不覆盖上海卷与江苏题库；支持 year / keyword 查询。
+  router.get('/zhejiang/prompts', (req, res) => {
+    const items = filterList(zhejiangPrompts, req, res, zhejiangSearchableText);
+    if (!items) return undefined;
+    return res.json(items);
+  });
+
+  // 单题详情：三套题库统一按 id 查找，不存在返回结构化 404。
   router.get('/prompts/:id', (req, res) => {
-    const item = [...prompts, ...jiangsuPrompts].find((p) => p.id === req.params.id);
+    const item = [...prompts, ...jiangsuPrompts, ...zhejiangPrompts].find((p) => p.id === req.params.id);
     if (!item) {
       return res.status(404).json({
         error: {
@@ -207,16 +235,17 @@ export function createApiRouter(prompts, jiangsuPrompts = []) {
 
 /** 构建 Express 应用。options.prompts 可注入数据，便于测试。 */
 export function createApp(options = {}) {
-  // 启动时即校验两套题目数据：结构缺失或占位文本会直接抛错，不启动服务。
+  // 启动时即校验三套题目数据：结构缺失或占位文本会直接抛错，不启动服务。
   const prompts = options.prompts || loadPrompts();
   const jiangsuPrompts = options.jiangsuPrompts || loadJiangsuPrompts();
+  const zhejiangPrompts = options.zhejiangPrompts || loadZhejiangPrompts();
   const app = express();
   app.disable('x-powered-by');
 
   // 请求体大小限制：防止超大输入，也保证超长题目能进入业务校验而非直接 413。
   app.use(express.json({ limit: '128kb', strict: true }));
 
-  const api = createApiRouter(prompts, jiangsuPrompts);
+  const api = createApiRouter(prompts, jiangsuPrompts, zhejiangPrompts);
   const apiNotFound = (_req, res) =>
     res.status(404).json({
       error: { code: 'API_NOT_FOUND', message: '接口不存在，请检查请求路径后重试。' },

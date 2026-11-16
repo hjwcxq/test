@@ -81,6 +81,63 @@ export function jiangsuPromptToText(prompt) {
   return lines.join('\n').trim() + '\n';
 }
 
+export function zhejiangPromptToText(prompt) {
+  if (!prompt) return '';
+  const lines = [];
+  const push = (...items) => lines.push(...items, '');
+
+  push('【文思 · 浙江高考作文审题与写作指导】');
+  push(`${prompt.year} 年 ${prompt.province}｜${prompt.paper}｜${prompt.title}`);
+
+  push('—— 作文材料 ——');
+  push(prompt.material);
+
+  push('—— 写作要求 ——');
+  push(prompt.requirements);
+
+  push('—— 审题立意 ——');
+  push(prompt.concept);
+  for (const point of prompt.reviewPoints || []) push(`· ${point}`);
+
+  push('—— 关键词拆解 ——');
+  for (const k of prompt.keywords || []) push(`· ${k.term}：${k.analysis}`);
+
+  push('—— 立意方向 ——');
+  (prompt.angles || []).forEach((a, i) => {
+    push(`${i + 1}. ${a.title}｜${a.level}｜${a.fit}`);
+    push(`   ${a.description}`);
+  });
+
+  push(`—— 结构提纲（${prompt.structure?.wordBudget || ''}） ——`);
+  for (const s of prompt.structure?.sections || []) {
+    push(`【${s.part}】${s.ratio}`);
+    push(`   段落功能：${s.function}`);
+    push(`   写作提示：${s.guidance}`);
+  }
+
+  push('—— 素材与表达建议 ——');
+  for (const m of prompt.materials || []) {
+    push(`· ${m.direction}`);
+    for (const ex of m.examples || []) push(`   - ${ex}`);
+  }
+  (prompt.writingTips || []).forEach((tip, i) => push(`${i + 1}. ${tip}`));
+
+  push('—— 常见误区与升格建议 ——');
+  (prompt.pitfalls || []).forEach((p, i) => {
+    push(`${i + 1}. 误区：${p.mistake}`);
+    push(`   升格：${p.upgrade}`);
+  });
+
+  push('—— 评分关注点 ——');
+  for (const point of prompt.scoringPoints || []) push(`· ${point}`);
+
+  push('—— 来源与核验 ——');
+  push(prompt.source);
+
+  push('说明：审题、写作指导与评分关注点为学习内容，不代表官方评分标准。');
+  return lines.join('\n').trim() + '\n';
+}
+
 export function promptToText(prompt) {
   if (!prompt) return '';
   const lines = [];

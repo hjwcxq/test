@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "description": "文思 · 上海卷与江苏新课标I卷高考作文题库，自定义题目结构化剖析",
+  "description": "文思 · 上海卷、江苏与浙江高考作文题库，自定义题目结构化剖析",
   "engines": {
     "node": ">=20"
   },

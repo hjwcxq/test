@@ -48,6 +48,10 @@ export function getJiangsuPrompts() {
   return request('/api/jiangsu/prompts');
 }
 
+export function getZhejiangPrompts() {
+  return request('/api/zhejiang/prompts');
+}
+
 export function getPrompt(id) {
   return request(`/api/prompts/${encodeURIComponent(id)}`);
 }

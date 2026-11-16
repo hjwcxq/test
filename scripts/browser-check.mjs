@@ -351,6 +351,57 @@ async function runCdp(chrome, base, cdpPort, profile) {
       );
     });
 
+    await check('浏览器：切换浙江高考作文入口，3 张卡片按年份从近到远排列', async () => {
+      await evaluate("location.hash='#/'; true");
+      await waitFor("document.body.innerText.includes('上海卷高考作文真题')", '返回首页');
+      await evaluate(
+        "Array.from(document.querySelectorAll('.region-tab')).find(b=>b.textContent.includes('浙江高考作文')).click(); true"
+      );
+      await waitFor("document.body.innerText.includes('浙江高考作文真题')", '浙江题库标题');
+      await waitFor("document.querySelectorAll('a.prompt-card').length === 3", '浙江三题');
+
+      const cards = await evaluate(
+        "Array.from(document.querySelectorAll('a.prompt-card')).map(a => a.innerText)"
+      );
+      assert.ok(cards[0].includes('2024') && cards[1].includes('2023') && cards[2].includes('2022'), '浙江卡片应按年份从近到远排列');
+      const text = await evaluate('document.body.innerText');
+      for (const needle of ['创新时代的青年担当', '故事的力量', '答案与问题', '浙江卷', '新课标I卷']) {
+        assert.ok(text.includes(needle), `浙江题库应含「${needle}」`);
+      }
+      assert.ok(text.includes('3 题'), '浙江题库应标注 3 题');
+    });
+
+    await check('浏览器：浙江真题详情完整展示材料、要求与全部写作指导字段', async () => {
+      await evaluate("document.querySelector('a.prompt-card').click(); true");
+      await waitFor("document.body.innerText.includes('审题立意与写作指导')", '浙江详情页');
+      const text = await evaluate('document.body.innerText');
+      for (const needle of [
+        '作文材料',
+        '写作要求',
+        '审题立意',
+        '关键词拆解',
+        '立意方向',
+        '结构提纲',
+        '素材与表达建议',
+        '常见误区',
+        '评分关注点',
+        '来源与核验',
+        '人工智能',
+        '不少于800字',
+        '2024年普通高等学校招生全国统一考试',
+      ]) {
+        assert.ok(text.includes(needle), `浙江详情应含「${needle}」`);
+      }
+      assert.ok((await evaluate("document.querySelectorAll('.angle-card').length")) >= 3);
+      assert.ok((await evaluate("document.querySelectorAll('.outline-row').length")) >= 4);
+      assert.ok((await evaluate("document.querySelectorAll('.mini-card').length")) >= 4);
+
+      await evaluate("location.hash='#/prompts/zhejiang-2022'; true");
+      await waitFor("document.body.innerText.includes('创新时代的青年担当')", '浙江 2022 直达');
+      const old = await evaluate('document.body.innerText');
+      assert.ok(old.includes('徐枫灿') && old.includes('浙江卷'), '浙江 2022 直达详情应完整');
+    });
+
     await check('浏览器：不存在的江苏题目 id 与非法年份参数均显示友好提示', async () => {
       await evaluate("location.hash='#/prompts/jiangsu-9999'; true");
       await waitFor("document.body.innerText.includes('未找到该题目')", '不存在 id 提示');
@@ -553,6 +604,27 @@ async function runCdp(chrome, base, cdpPort, profile) {
         assert.ok(
           layout.scrollWidth <= layout.innerWidth + 1,
           `${width}px 下江苏详情横向溢出：${JSON.stringify(layout)}`
+        );
+      }
+    });
+
+    await check('浏览器：375px / 1024px 下浙江真题详情无横向溢出', async () => {
+      await evaluate("location.hash='#/prompts/zhejiang-2024'; true");
+      await waitFor("document.body.innerText.includes('评分关注点')", '浙江详情页');
+      for (const [width, height] of [[375, 800], [1024, 900]]) {
+        await send('Emulation.setDeviceMetricsOverride', {
+          width,
+          height,
+          deviceScaleFactor: 1,
+          mobile: width < 600,
+        });
+        await new Promise((resolve) => setTimeout(resolve, 400));
+        const layout = await evaluate(
+          '({ scrollWidth: document.documentElement.scrollWidth, innerWidth: window.innerWidth })'
+        );
+        assert.ok(
+          layout.scrollWidth <= layout.innerWidth + 1,
+          `${width}px 下浙江详情横向溢出：${JSON.stringify(layout)}`
         );
       }
     });

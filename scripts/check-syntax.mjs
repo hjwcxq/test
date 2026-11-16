@@ -28,6 +28,7 @@ const targets = [
   'test/data.test.js',
   'test/api.test.js',
   'test/jiangsu.test.js',
+  'test/zhejiang.test.js',
 ];
 
 for (const relative of targets) {
@@ -46,11 +47,13 @@ assert.equal(typeof analyzer.detectQuestionType, 'function');
 assert.equal(analyzer.MAX_TOPIC_LENGTH, 2000);
 assert.equal(typeof data.loadPrompts, 'function');
 assert.equal(typeof data.loadJiangsuPrompts, 'function');
+assert.equal(typeof data.loadZhejiangPrompts, 'function');
 assert.equal(typeof app.createApp, 'function');
 assert.equal(typeof llm.analyzeTopic, 'function');
 assert.equal(data.loadPrompts().length, 3);
 assert.equal(data.loadJiangsuPrompts().length, 3);
-assert.equal(data.loadAllPrompts().length, 6);
+assert.equal(data.loadZhejiangPrompts().length, 3);
+assert.equal(data.loadAllPrompts().length, 9);
 assert.equal(typeof (await llm.analyzeTopic('谈谈读书')).questionType.name, 'string');
 
 console.log(`[lint] 语法检查通过：${targets.length} 个文件；关键模块加载与导出校验通过。`);

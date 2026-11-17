@@ -334,11 +334,16 @@ async function runCdp(chrome, base, cdpPort, profile) {
         '不少于800字',
         '2024年普通高等学校招生全国统一考试',
         '新课标I卷',
+        '精彩范文',
+        '范文点评',
+        '范文仅供学习参考',
       ]) {
         assert.ok(text.includes(needle), `江苏详情应含「${needle}」`);
       }
       assert.ok((await evaluate("document.querySelectorAll('.outline-row').length")) >= 2);
       assert.ok((await evaluate("document.querySelectorAll('.number-list li').length")) >= 2);
+      assert.ok((await evaluate("document.querySelectorAll('.essay-section .essay-body p').length")) >= 4);
+      assert.ok(await evaluate("!!document.querySelector('.essay-section .essay-title')"));
       const materialText = await evaluate("document.querySelector('.material-text').innerText");
       assert.ok(
         materialText.includes('越来越多的问题能很快得到答案') && materialText.includes('以上材料引发了你怎样的联想和思考'),
@@ -389,12 +394,16 @@ async function runCdp(chrome, base, cdpPort, profile) {
         '人工智能',
         '不少于800字',
         '2024年普通高等学校招生全国统一考试',
+        '精彩范文',
+        '范文点评',
+        '范文仅供学习参考',
       ]) {
         assert.ok(text.includes(needle), `浙江详情应含「${needle}」`);
       }
       assert.ok((await evaluate("document.querySelectorAll('.angle-card').length")) >= 3);
       assert.ok((await evaluate("document.querySelectorAll('.outline-row').length")) >= 4);
       assert.ok((await evaluate("document.querySelectorAll('.mini-card').length")) >= 4);
+      assert.ok((await evaluate("document.querySelectorAll('.essay-section .essay-body p').length")) >= 4);
 
       await evaluate("location.hash='#/prompts/zhejiang-2022'; true");
       await waitFor("document.body.innerText.includes('创新时代的青年担当')", '浙江 2022 直达');
@@ -424,11 +433,34 @@ async function runCdp(chrome, base, cdpPort, profile) {
       );
       await waitFor("document.body.innerText.includes('立意角度分层')", '详情页');
       const text = await evaluate('document.body.innerText');
-      for (const needle of ['题目原文', '审题要点', '关键词拆解', '结构框架', '素材方向', '常见偏题误区与升格建议', '高度切题']) {
+      for (const needle of [
+        '题目原文',
+        '审题要点',
+        '关键词拆解',
+        '结构框架',
+        '素材方向',
+        '常见偏题误区与升格建议',
+        '高度切题',
+        '精彩范文',
+        '范文点评',
+        '范文仅供学习参考',
+      ]) {
         assert.ok(text.includes(needle), `详情应含「${needle}」`);
       }
       assert.ok((await evaluate("document.querySelectorAll('.angle-card').length")) >= 3);
       assert.ok((await evaluate("document.querySelectorAll('.outline-row').length")) >= 4);
+      assert.ok((await evaluate("document.querySelectorAll('.essay-section .essay-body p').length")) >= 4);
+      const essayTitle = await evaluate("document.querySelector('.essay-section .essay-title').innerText");
+      assert.ok(essayTitle.length >= 2, '范文应有标题');
+
+      // 切换内置题目后，范文标题与正文应同步更新，不能残留上一篇内容。
+      await evaluate("location.hash='#/prompts/shanghai-2023'; true");
+      await waitFor("document.body.innerText.includes('好奇心与探索陌生世界')", '切换到 2023 真题');
+      const nextTitle = await evaluate("document.querySelector('.essay-section .essay-title').innerText");
+      assert.notEqual(nextTitle, essayTitle, '切换题目后范文标题应更新');
+      const nextBody = await evaluate("document.querySelector('.essay-section .essay-body').innerText");
+      assert.ok(nextBody.includes('好奇心'), '切换题目后范文内容应对应新题目');
+      assert.ok(!nextBody.includes('认可度'), '切换题目后不应残留上一题范文');
     });
 
     await check('浏览器：返回首页并进入自定义剖析页，字数统计与示例可见', async () => {
@@ -507,6 +539,8 @@ async function runCdp(chrome, base, cdpPort, profile) {
       }
       assert.ok((await evaluate("document.querySelectorAll('.angle-card').length")) >= 3);
       assert.ok((await evaluate("document.querySelectorAll('.outline-row').length")) >= 4);
+      assert.ok(!text.includes('精彩范文'), '自定义剖析结果不应出现范文板块');
+      assert.equal(await evaluate("document.querySelectorAll('.essay-section').length"), 0);
     });
 
     let clipboardGranted = false;
@@ -627,6 +661,28 @@ async function runCdp(chrome, base, cdpPort, profile) {
           `${width}px 下浙江详情横向溢出：${JSON.stringify(layout)}`
         );
       }
+    });
+
+    await check('浏览器：375px / 1024px 下上海真题范文详情无横向溢出', async () => {
+      await evaluate("location.hash='#/prompts/shanghai-2024'; true");
+      await waitFor("document.body.innerText.includes('精彩范文')", '上海范文详情');
+      for (const [width, height] of [[375, 800], [1024, 900]]) {
+        await send('Emulation.setDeviceMetricsOverride', {
+          width,
+          height,
+          deviceScaleFactor: 1,
+          mobile: width < 600,
+        });
+        await new Promise((resolve) => setTimeout(resolve, 400));
+        const layout = await evaluate(
+          '({ scrollWidth: document.documentElement.scrollWidth, innerWidth: window.innerWidth })'
+        );
+        assert.ok(
+          layout.scrollWidth <= layout.innerWidth + 1,
+          `${width}px 下上海详情横向溢出：${JSON.stringify(layout)}`
+        );
+      }
+      assert.ok((await evaluate("document.querySelectorAll('.essay-section .essay-body p').length")) >= 4);
     });
 
     await check('浏览器：键盘 Enter 可切换江苏题库入口', async () => {

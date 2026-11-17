@@ -162,14 +162,14 @@ export default function Home() {
             <Link className="btn btn-primary" to="/analyze">开始自定义剖析</Link>
             <a className="btn btn-outline" href="#library">浏览真题题库</a>
           </div>
-          <p className="hero-note">首版聚焦「解题与写作思路指导」：不生成整篇范文，不作评分或逐句批改。</p>
+          <p className="hero-note">内置真题均配一篇完整精彩范文与四维点评；自定义剖析聚焦解题思路，不生成整篇范文，也不作评分或逐句批改。</p>
         </div>
       </section>
 
       <section className="feature-row" aria-label="产品能力">
         <Card className="feature-card">
           <h3>真题精解</h3>
-          <p>上海卷、江苏新课标I卷与浙江近三年真题逐题拆解：从「审题要点」到「评分关注点」，每一栏都可直接使用。</p>
+          <p>上海卷、江苏新课标I卷与浙江近三年真题逐题拆解：从「审题要点」到「评分关注点」，每道题另附一篇完整范文与立意、结构、语言点评。</p>
         </Card>
         <Card className="feature-card">
           <h3>任意题目剖析</h3>

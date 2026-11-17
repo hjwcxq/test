@@ -29,6 +29,7 @@ const targets = [
   'test/api.test.js',
   'test/jiangsu.test.js',
   'test/zhejiang.test.js',
+  'test/essays.test.js',
 ];
 
 for (const relative of targets) {
@@ -54,6 +55,13 @@ assert.equal(data.loadPrompts().length, 3);
 assert.equal(data.loadJiangsuPrompts().length, 3);
 assert.equal(data.loadZhejiangPrompts().length, 3);
 assert.equal(data.loadAllPrompts().length, 9);
+assert.equal(typeof data.countEssayChars, 'function');
+assert.equal(data.ESSAY_MIN_CHARS, 800);
+for (const prompt of data.loadAllPrompts()) {
+  assert.ok(prompt.essayTitle && prompt.essayBody, `${prompt.id} 缺少范文`);
+  assert.ok(data.countEssayChars(prompt.essayBody) >= data.ESSAY_MIN_CHARS, `${prompt.id} 范文字数不足`);
+  assert.match(prompt.essayDisclaimer, /范文仅供学习参考/);
+}
 assert.equal(typeof (await llm.analyzeTopic('谈谈读书')).questionType.name, 'string');
 
 console.log(`[lint] 语法检查通过：${targets.length} 个文件；关键模块加载与导出校验通过。`);

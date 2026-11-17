@@ -1,5 +1,21 @@
 /** 把结构化内容导出为可直接粘贴到笔记 / 文档中的纯文本（含立意与提纲）。 */
 
+/** 追加“精彩范文”段落；自定义剖析结果没有范文字段，调用时自然跳过。 */
+function pushEssay(prompt, push) {
+  if (!prompt?.essayTitle || !prompt?.essayBody) return;
+  push('—— 精彩范文 ——');
+  push(prompt.essayTitle);
+  for (const paragraph of String(prompt.essayBody).split(/\n\s*\n/)) {
+    if (paragraph.trim()) push(paragraph.trim());
+  }
+  const comment = prompt.essayComment || {};
+  const labels = { intention: '立意', structure: '结构', language: '语言', takeaway: '借鉴' };
+  for (const [key, label] of Object.entries(labels)) {
+    if (comment[key]) push(`点评·${label}：${comment[key]}`);
+  }
+  if (prompt.essayDisclaimer) push(prompt.essayDisclaimer);
+}
+
 export function resultToText(result) {
   if (!result) return '';
   const lines = [];
@@ -74,6 +90,8 @@ export function jiangsuPromptToText(prompt) {
   push('—— 写作提示 ——');
   (prompt.writingTips || []).forEach((tip, i) => push(`${i + 1}. ${tip}`));
 
+  pushEssay(prompt, push);
+
   push('—— 来源 ——');
   push(prompt.source);
 
@@ -131,6 +149,8 @@ export function zhejiangPromptToText(prompt) {
   push('—— 评分关注点 ——');
   for (const point of prompt.scoringPoints || []) push(`· ${point}`);
 
+  pushEssay(prompt, push);
+
   push('—— 来源与核验 ——');
   push(prompt.source);
 
@@ -182,6 +202,8 @@ export function promptToText(prompt) {
     push(`${i + 1}. 误区：${p.mistake}`);
     push(`   升格：${p.upgrade}`);
   });
+
+  pushEssay(prompt, push);
 
   return lines.join('\n').trim() + '\n';
 }

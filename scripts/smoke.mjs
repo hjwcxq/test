@@ -259,6 +259,41 @@ async function main() {
       assert.equal((await missing.json()).error.code, 'PROMPT_NOT_FOUND');
     });
 
+    await check('九道内置题均返回完整范文与四维点评，自定义剖析不含范文字段', async () => {
+      const ids = [
+        'shanghai-2022',
+        'shanghai-2023',
+        'shanghai-2024',
+        'jiangsu-2022',
+        'jiangsu-2023',
+        'jiangsu-2024',
+        'zhejiang-2022',
+        'zhejiang-2023',
+        'zhejiang-2024',
+      ];
+      for (const id of ids) {
+        const r = await fetch(`${base}/apps/p1/api/prompts/${id}`);
+        assert.equal(r.status, 200, `${id} 详情应返回 200`);
+        const body = await r.json();
+        assert.ok(body.essayTitle && body.essayBody, `${id} 缺少范文`);
+        assert.ok([...body.essayBody.replace(/\s/g, '')].length >= 800, `${id} 范文字数不足`);
+        assert.equal(body.essayBody.split(/\n\s*\n/).filter(Boolean).length >= 4, true);
+        for (const field of ['intention', 'structure', 'language', 'takeaway']) {
+          assert.ok(body.essayComment?.[field], `${id} 缺少 ${field} 点评`);
+        }
+        assert.match(body.essayDisclaimer, /范文仅供学习参考/);
+      }
+
+      const analyzed = await fetch(`${base}/apps/p1/api/analyze`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ topic: '好奇心与探索' }),
+      });
+      assert.equal(analyzed.status, 200);
+      const result = await analyzed.json();
+      assert.equal(result.essayBody, undefined, '自定义剖析不应返回范文');
+    });
+
     const validTopic = '一个人乐意去探索陌生世界，仅仅是因为好奇心吗？';
 
     await check('POST /api/analyze 合法题目（根路径与前缀）返回 200 且字段完整', async () => {

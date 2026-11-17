@@ -676,6 +676,43 @@ textarea:focus-visible {
 .pitfall p { font-size: 13.8px; color: var(--ink-soft); overflow-wrap: anywhere; }
 .pitfall p + p { margin-top: 8px; }
 
+/* ---------- 精彩范文 ---------- */
+.essay-section .section-body { display: grid; gap: 16px; }
+.essay-card {
+  padding: 26px 30px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+.essay-card-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  padding-bottom: 16px;
+  margin-bottom: 18px;
+  border-bottom: 1px dashed var(--line);
+}
+.essay-eyebrow { color: var(--muted); font-size: 12.5px; letter-spacing: 1px; margin-bottom: 6px; }
+.essay-title { font-size: clamp(20px, 2.4vw, 24px); color: var(--seal-dark); letter-spacing: 1px; overflow-wrap: anywhere; }
+.essay-body { font-family: var(--serif); font-size: 16px; line-height: 2.05; color: var(--ink); }
+.essay-body p { text-indent: 2em; overflow-wrap: anywhere; }
+.essay-body p + p { margin-top: 12px; }
+.essay-comment { display: grid; gap: 12px; }
+.essay-comment .mini-card h4 { font-size: 15px; margin-bottom: 6px; }
+.essay-disclaimer {
+  padding: 12px 16px;
+  background: rgba(143, 49, 44, 0.05);
+  border: 1px dashed rgba(143, 49, 44, 0.35);
+  border-radius: var(--radius);
+  color: var(--seal-dark);
+  font-size: 12.8px;
+  line-height: 1.8;
+  overflow-wrap: anywhere;
+}
+
 .type-card p { color: var(--ink-soft); font-size: 14px; margin-top: 9px; overflow-wrap: anywhere; }
 .type-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .type-head h3 { font-size: 19px; color: var(--seal); margin-right: 6px; }
@@ -810,6 +847,10 @@ textarea:focus-visible {
   .detail-actions { width: 100%; }
   .detail-actions .btn { flex: 1 1 auto; }
   .original-text { padding: 16px 16px; font-size: 15px; }
+  .essay-card { padding: 18px 16px; }
+  .essay-card-top .btn { flex: 1 1 100%; }
+  .essay-body { font-size: 15px; line-height: 1.95; }
+  .essay-body p + p { margin-top: 9px; }
   .section { margin-top: 26px; }
   .section-head h2 { font-size: 19px; }
   .section-desc { font-size: 12.5px; }

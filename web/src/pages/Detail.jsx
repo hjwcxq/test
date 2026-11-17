@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { getPrompt } from '../api.js';
-import { Badge, CopyButton, ErrorState, LoadingState, Section } from '../components.jsx';
+import { Badge, CopyButton, ErrorState, EssaySection, LoadingState, Section } from '../components.jsx';
 import { jiangsuPromptToText, promptToText, zhejiangPromptToText } from '../exportText.js';
 
 function ZhejiangDetail({ prompt }) {
@@ -143,7 +143,9 @@ function ZhejiangDetail({ prompt }) {
         </ul>
       </Section>
 
-      <Section index={10} title="来源与核验" description="题目材料与写作要求依据公开试题文本整理。">
+      <EssaySection index={10} prompt={prompt} />
+
+      <Section index={11} title="来源与核验" description="题目材料与写作要求依据公开试题文本整理。">
         <p className="source-note">{prompt.source}</p>
         <p className="muted small">
           浙江省 2022 年使用浙江卷，2023 年起使用新课标I卷，作文题与同卷省份一致。本页审题与写作指导为学习内容，如与官方文本有个别文字差异，以官方发布为准。
@@ -214,7 +216,9 @@ function JiangsuDetail({ prompt }) {
         </div>
       </Section>
 
-      <Section index={5} title="来源" description="题目材料与写作要求依据公开试题文本整理。">
+      <EssaySection index={5} prompt={prompt} />
+
+      <Section index={6} title="来源" description="题目材料与写作要求依据公开试题文本整理。">
         <p className="source-note">{prompt.source}</p>
         <p className="muted small">江苏语文高考采用新课标I卷。本页审题与写作提示为学习指导内容，如与官方文本有个别文字差异，以官方发布为准。</p>
       </Section>
@@ -381,6 +385,8 @@ export default function Detail() {
           ))}
         </div>
       </Section>
+
+      <EssaySection index={9} prompt={prompt} />
 
       <footer className="detail-foot">
         <Link className="btn btn-outline" to="/">← 返回题目库</Link>

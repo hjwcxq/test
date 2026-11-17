@@ -14,6 +14,16 @@ export const ZHEJIANG_PROVINCE = '浙江';
 export const ZHEJIANG_PAPERS = ['浙江卷', '新课标I卷'];
 export const PLACEHOLDER_RE = /TODO|待补充|占位文本|示例文本|placeholder|lorem ipsum|XXX/i;
 
+/** 范文正文的最低字数（不计空白字符），以及点评必须覆盖的四个维度。 */
+export const ESSAY_MIN_CHARS = 800;
+export const ESSAY_COMMENT_FIELDS = ['intention', 'structure', 'language', 'takeaway'];
+export const ESSAY_DISCLAIMER_KEYWORD = '范文仅供学习参考';
+
+/** 统计范文正文的有效字符数：忽略空格、换行等空白，中英文标点均计入。 */
+export function countEssayChars(text) {
+  return Array.from(String(text || '').replace(/\s/g, '')).length;
+}
+
 function fail(message) {
   throw new Error(`[data/prompts.json 校验失败] ${message}`);
 }
@@ -48,6 +58,47 @@ function assertObjects(list, label, fields) {
 }
 
 /**
+ * 校验单题配套范文。每道内置题必须且只能有一篇范文：标题、完整正文、
+ * 四维点评与学习参考声明齐全，正文不少于 ESSAY_MIN_CHARS 字且分自然段，
+ * 避免用提纲、片段或占位文本充数。fail 用于复用各题库的中文错误前缀。
+ */
+function assertEssay(prompt, label, fail) {
+  for (const field of ['essayTitle', 'essayBody', 'essayDisclaimer']) {
+    if (!isText(prompt[field])) fail(`${label}.${field} 必须是非空且非占位的中文文本`);
+  }
+
+  const chars = countEssayChars(prompt.essayBody);
+  if (chars < ESSAY_MIN_CHARS) {
+    fail(`${label}.essayBody 正文至少 ${ESSAY_MIN_CHARS} 字，当前 ${chars} 字`);
+  }
+
+  const paragraphs = prompt.essayBody
+    .split(/\n\s*\n/)
+    .map((part) => part.trim())
+    .filter(Boolean);
+  if (paragraphs.length < 4) {
+    fail(`${label}.essayBody 必须是完整成篇作文，至少包含 4 个自然段`);
+  }
+
+  const comment = prompt.essayComment;
+  if (!comment || typeof comment !== 'object' || Array.isArray(comment)) {
+    fail(`${label}.essayComment 必须是对象`);
+  }
+  for (const field of ESSAY_COMMENT_FIELDS) {
+    if (!isText(comment[field])) {
+      fail(`${label}.essayComment.${field} 必须是非空且非占位的中文文本`);
+    }
+    if (comment[field].trim().length < 20) {
+      fail(`${label}.essayComment.${field} 需要至少 20 字的实质性点评`);
+    }
+  }
+
+  if (!prompt.essayDisclaimer.includes(ESSAY_DISCLAIMER_KEYWORD)) {
+    fail(`${label}.essayDisclaimer 必须包含「${ESSAY_DISCLAIMER_KEYWORD}」提示`);
+  }
+}
+
+/**
  * 校验题目数据集的完整结构。任何缺字段 / 占位文本 / 年份缺失都会抛错，
  * 便于服务在启动阶段就暴露数据问题，而不是等到页面渲染时才发现空白内容。
  */
@@ -59,6 +110,7 @@ export function validateDataset(raw) {
 
   const seenIds = new Set();
   const seenYears = new Set();
+  const seenEssayTitles = new Set();
   const prompts = [];
 
   for (const [index, p] of raw.prompts.entries()) {
@@ -113,6 +165,10 @@ export function validateDataset(raw) {
     assertArray(p.pitfalls, 2, `${label}.pitfalls`);
     assertObjects(p.pitfalls, `${label}.pitfalls`, ['mistake', 'upgrade']);
 
+    assertEssay(p, label, fail);
+    if (seenEssayTitles.has(p.essayTitle)) fail(`范文标题重复：${p.essayTitle}`);
+    seenEssayTitles.add(p.essayTitle);
+
     prompts.push(p);
   }
 
@@ -157,9 +213,13 @@ export function validateJiangsuDataset(raw, options = {}) {
   const existingPrompts = Array.isArray(options.existingPrompts) ? options.existingPrompts : [];
   const existingIds = new Set(existingPrompts.map((p) => p.id));
   const existingTitles = new Set(existingPrompts.map((p) => `${p.year}|${p.title}`));
+  const existingEssayTitles = new Set(
+    existingPrompts.map((p) => p.essayTitle).filter(Boolean)
+  );
 
   const seenIds = new Set();
   const seenYears = new Set();
+  const seenEssayTitles = new Set();
   const prompts = [];
 
   for (const [index, p] of raw.prompts.entries()) {
@@ -202,6 +262,12 @@ export function validateJiangsuDataset(raw, options = {}) {
 
     if (p.concept.length < 30) failJiangsu(`${label}.concept 需要完整的审题立意说明`);
     if (p.source.length < 10) failJiangsu(`${label}.source 需要可核验的来源说明`);
+
+    assertEssay(p, label, failJiangsu);
+    if (seenEssayTitles.has(p.essayTitle) || existingEssayTitles.has(p.essayTitle)) {
+      failJiangsu(`范文标题重复：${p.essayTitle}`);
+    }
+    seenEssayTitles.add(p.essayTitle);
 
     prompts.push(p);
   }
@@ -264,9 +330,13 @@ export function validateZhejiangDataset(raw, options = {}) {
   const existingPrompts = Array.isArray(options.existingPrompts) ? options.existingPrompts : [];
   const existingIds = new Set(existingPrompts.map((p) => p.id));
   const existingTitles = new Set(existingPrompts.map((p) => `${p.year}|${p.title}`));
+  const existingEssayTitles = new Set(
+    existingPrompts.map((p) => p.essayTitle).filter(Boolean)
+  );
 
   const seenIds = new Set();
   const seenYears = new Set();
+  const seenEssayTitles = new Set();
   const prompts = [];
 
   for (const [index, p] of raw.prompts.entries()) {
@@ -343,6 +413,12 @@ export function validateZhejiangDataset(raw, options = {}) {
 
     assertZhejiangArray(p.scoringPoints, 3, `${label}.scoringPoints`);
     p.scoringPoints.forEach((point, i) => assertZhejiangText(point, `${label}.scoringPoints[${i}]`));
+
+    assertEssay(p, label, failZhejiang);
+    if (seenEssayTitles.has(p.essayTitle) || existingEssayTitles.has(p.essayTitle)) {
+      failZhejiang(`范文标题重复：${p.essayTitle}`);
+    }
+    seenEssayTitles.add(p.essayTitle);
 
     prompts.push(p);
   }

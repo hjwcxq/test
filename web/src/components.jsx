@@ -101,6 +101,75 @@ export function Badge({ children, tone = 'neutral' }) {
   return <span className={`badge badge-${tone}`}>{children}</span>;
 }
 
+/**
+ * 内置题目的“精彩范文”独立板块：标题、完整正文、四维点评与学习参考声明。
+ * 仅在题目带有范文数据时渲染，自定义剖析结果不会出现本板块。
+ */
+export function EssaySection({ prompt, index }) {
+  if (!prompt || !prompt.essayTitle || !prompt.essayBody) return null;
+
+  const paragraphs = String(prompt.essayBody)
+    .split(/\n\s*\n/)
+    .map((part) => part.trim())
+    .filter(Boolean);
+  if (paragraphs.length === 0) return null;
+
+  const comment = prompt.essayComment || {};
+  const dimensions = [
+    ['立意', comment.intention],
+    ['结构', comment.structure],
+    ['语言', comment.language],
+    ['借鉴', comment.takeaway],
+  ].filter(([, text]) => typeof text === 'string' && text.trim());
+
+  const wordCount = Array.from(String(prompt.essayBody).replace(/\s/g, '')).length;
+  const copyText = [prompt.essayTitle, '', prompt.essayBody, '', prompt.essayDisclaimer || '']
+    .join('\n')
+    .trim();
+
+  return (
+    <Section
+      index={index}
+      title="精彩范文"
+      description="一篇完整示范作文，附立意、结构、语言与可借鉴处的点评，供对照学习。"
+      className="essay-section"
+    >
+      <article className="essay-card">
+        <div className="essay-card-top">
+          <div>
+            <p className="essay-eyebrow">示范写作 · 约 {wordCount} 字</p>
+            <h3 className="essay-title">{prompt.essayTitle}</h3>
+          </div>
+          <CopyButton text={copyText} label="复制范文" />
+        </div>
+        <div className="essay-body">
+          {paragraphs.map((paragraph, i) => (
+            <p key={i}>{paragraph}</p>
+          ))}
+        </div>
+      </article>
+
+      {dimensions.length > 0 && (
+        <div className="essay-comment">
+          <h3 className="mini-title">范文点评</h3>
+          <div className="card-grid card-grid-2">
+            {dimensions.map(([label, text]) => (
+              <div className="card mini-card" key={label}>
+                <h4 className="mini-title">{label}</h4>
+                <p>{text}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {prompt.essayDisclaimer && (
+        <p className="essay-disclaimer" role="note">{prompt.essayDisclaimer}</p>
+      )}
+    </Section>
+  );
+}
+
 export function Card({ children, className = '' }) {
   return <div className={`card ${className}`}>{children}</div>;
 }

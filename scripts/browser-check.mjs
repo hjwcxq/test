@@ -249,6 +249,23 @@ async function runCdp(chrome, base, cdpPort, profile) {
       assert.ok(text.includes('上海卷高考作文真题'));
     });
 
+    await check('浏览器：卡片与页脚均不含年份来源说明，卡片核心内容完整', async () => {
+      const cards = await evaluate(`
+        Array.from(document.querySelectorAll('a.prompt-card')).map(card => card.innerText)
+      `);
+      assert.equal(cards.length, 3, '上海卷应保持 3 张卡片');
+      for (const card of cards) {
+        assert.ok(!/内置\s*20\d{2}/.test(card), '卡片不应出现「内置 20XX」来源说明');
+        assert.match(card, /\d{4}/, '卡片应保留年份');
+        assert.match(card, /个立意角度/, '卡片应保留立意角度统计');
+        assert.match(card, /查看解题/, '卡片应保留解题入口');
+      }
+      const footer = await evaluate("document.querySelector('.site-footer').innerText");
+      assert.ok(!footer.includes('内置 2022—2024'), '页脚不应出现年份来源说明');
+      assert.ok(!/内置\s*20\d{2}/.test(footer), '页脚不应出现任何「内置 20XX」说明');
+      assert.ok(footer.includes('把一道题目，拆成可落笔的思路'), '页脚品牌标语应保留');
+    });
+
     await check('浏览器：关键词检索无结果时给出明确空状态提示', async () => {
       await evaluate(`
         (() => {
@@ -749,6 +766,12 @@ async function main() {
           for (const needle of ['上海卷高考作文真题', '江苏高考作文', '2022', '2023', '2024', '开始自定义剖析']) {
             assert.ok(dom.includes(needle), `首页 DOM 应含「${needle}」`);
           }
+        });
+        await check('浏览器：页脚不再显示「内置 2022—2024」年份来源说明', async () => {
+          const dom = dumpDom(chrome, `${base}/`);
+          assert.ok(!dom.includes('内置 2022—2024'), '页脚不应再出现年份来源说明');
+          assert.ok(!/内置\s*20\d{2}\s*[-—~至]\s*20\d{2}/.test(dom), '页脚不应出现任何「内置 20XX-20XX」说明');
+          assert.ok(dom.includes('把一道题目，拆成可落笔的思路'), '页脚品牌标语应保留');
         });
         await check('浏览器：/apps/p1/ 前缀下 hash 路由均可渲染且不白屏', async () => {
           const routes = [

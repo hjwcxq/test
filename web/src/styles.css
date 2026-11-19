@@ -904,25 +904,10 @@ textarea:focus-visible {
 .input-card-head label { font-family: var(--serif); font-size: 17px; font-weight: 700; }
 .counter { color: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums; }
 .counter-over { color: var(--seal); font-weight: 700; }
-#topic-input {
-  width: 100%;
-  display: block;
-  padding: 15px 16px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  background: #fbf8f1;
-  color: var(--ink);
-  font-size: 16px;
-  line-height: 1.9;
-  resize: vertical;
-  min-height: 180px;
-  outline: none;
-  overflow-wrap: anywhere;
-}
-#topic-input:focus { border-color: var(--seal); box-shadow: 0 0 0 3px rgba(143, 49, 44, 0.09); }
-#topic-input::placeholder { color: #a9a091; }
-
-/* 「再剖析一道题」输入框：加高以容纳长题目，宽度随卡片自适应。 */
+/* 首页作文题目输入框与「再剖析一道题」输入框统一尺寸：
+   加高以容纳长题目，可同时显示更多行，宽度随卡片自适应，内容过长时在框内滚动。 */
+#home-topic-input,
+#topic-input,
 #result-topic-input {
   width: 100%;
   max-width: 100%;
@@ -936,10 +921,15 @@ textarea:focus-visible {
   line-height: 1.9;
   resize: vertical;
   min-height: 320px;
+  overflow-y: auto;
   outline: none;
   overflow-wrap: anywhere;
 }
+#home-topic-input:focus,
+#topic-input:focus,
 #result-topic-input:focus { border-color: var(--seal); box-shadow: 0 0 0 3px rgba(143, 49, 44, 0.09); }
+#home-topic-input::placeholder,
+#topic-input::placeholder,
 #result-topic-input::placeholder { color: #a9a091; }
 .field-warn, .field-error {
   margin-top: 10px;

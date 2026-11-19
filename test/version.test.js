@@ -1,7 +1,7 @@
 /**
  * 版本号展示的针对性测试：
  * 1. 版本规范化为「vX」且过滤不安全字符；
- * 2. 版本以最近一次成功交付 v8 为准，v7 等旧版本不得覆盖；
+ * 2. 页面版本跟随部署/构建注入的实际交付版本，未注入时回退到兜底 v10；
  * 3. index.html 模板注入版本与基础路径后可重复渲染（刷新一致）；
  * 4. /health 返回当前版本，便于与发布记录核对；
  * 5. 前端页面从统一版本模块读取并带 data-testid，构建脚本产出 version.json。
@@ -36,17 +36,26 @@ test('版本号统一规范化为 vX，并过滤脚本注入字符', () => {
   assert.equal(normalizeVersion('__APP_VERSION__'), '');
 });
 
-test('版本展示以最近一次成功交付 v8 为准，v7 等旧版本不得覆盖', () => {
+test('版本号跟随实际交付版本，未注入时回退到兜底 v10', () => {
   assert.equal(envVersion({ APP_VERSION: '2.0.0' }), 'v2.0.0');
   assert.equal(envVersion({ DELIVERY_VERSION: 'v3.1.0' }), 'v3.1.0');
   assert.equal(envVersion({ APP_VERSION: '', BUILD_VERSION: '4.2.1' }), 'v4.2.1');
   assert.equal(envVersion({ APP_VERSION: '   ' }), '');
 
-  assert.equal(DELIVERY_VERSION, 'v8', '当前交付记录为 v8');
-  assert.equal(resolveVersion({}, null), 'v8', '无任何注入时应展示交付记录 v8');
-  assert.equal(resolveVersion({ APP_VERSION: 'v7.6.5' }, null), 'v8', '遗留的 v7 环境变量不得展示');
-  assert.equal(resolveVersion({}, { version: 'v7.0.0' }), 'v8', '旧构建产物不得把版本回退到 v7');
-  assert.equal(resolveVersion({ APP_VERSION: '9.9.9' }, { version: 'v1.0.0' }), 'v9.9.9', '更高的新交付版本允许覆盖');
+  assert.equal(DELIVERY_VERSION, 'v10', '兜底版本应为最近一次成功交付 v10');
+  assert.equal(resolveVersion({}, null), 'v10', '无任何注入时应展示兜底交付版本 v10');
+  assert.equal(resolveVersion({ APP_VERSION: 'v10' }, null), 'v10', '部署注入 v10 时展示 v10');
+  assert.equal(resolveVersion({ APP_VERSION: '11.2.0' }, null), 'v11.2.0', '新交付版本应自动展示，无需改代码');
+  assert.equal(
+    resolveVersion({ APP_VERSION: '11.2.0' }, { version: 'v10' }),
+    'v11.2.0',
+    '部署注入应优先于构建产物'
+  );
+  assert.equal(
+    resolveVersion({}, { version: 'v9.2.1' }),
+    'v9.2.1',
+    '未注入环境变量时展示构建产物的实际版本'
+  );
   assert.equal(envVersion({ GIT_COMMIT: 'a24affb' }), '', '提交哈希是构建元数据，不能当作展示版本');
 });
 
@@ -105,10 +114,11 @@ test('版本号随首屏 HTML 服务端输出，无需等待脚本即可被验�
   assert.ok(!rendered.includes('__APP_VERSION_TEXT__'));
   assert.equal((rendered.match(/data-testid="app-version"/g) || []).length, 1);
 
-  // 本次交付的默认渲染结果：版本区域直接显示 v8，且不残留 v7。
+  // 本次交付的默认渲染结果：版本区域直接显示 v10（兜底即最近一次成功交付）。
   const delivery = renderIndexHtml(html, { basePath: '/apps/p1', version: resolveVersion({}, null) });
-  assert.match(delivery, /data-testid="app-version"[^>]*>当前版本：v8<\/span>/, '首屏版本区域应显示 v8');
-  assert.ok(!delivery.includes('当前版本：v7'), '页面不得再展示 v7');
+  assert.match(delivery, /data-testid="app-version"[^>]*>当前版本：v10<\/span>/, '首屏版本区域应显示 v10');
+  assert.ok(!delivery.includes('当前版本：v8'), '页面不得再展示 v8 等过期版本');
+  assert.ok(!delivery.includes('当前版本：v7'), '页面不得再展示 v7 等过期版本');
 
   // 版本号节点内部不能再嵌套元素：自动化验收常用 elementFromPoint 判断元素是否被遮挡，
   // 若中心点命中的是 <strong> 等子元素，会把可见的版本号误判为不可见。

@@ -14,9 +14,11 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { resultToText } from '../web/src/exportText.js';
+import { resolveVersion } from '../server/version.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const results = [];
+const expectedVersion = resolveVersion(process.env);
 
 /** 浏览器工具本身不可用（与应用缺陷无关）时，允许降级到真实 HTTP 校验。 */
 class BrowserInfraError extends Error {}
@@ -356,6 +358,55 @@ async function runCdp(chrome, base, cdpPort, profile) {
       assert.ok(text.includes('真题题库'));
     });
 
+    await check('浏览器：首页作文题目输入框加高、宽度自适应、长文可滚动且不遮挡按钮', async () => {
+      await waitFor("!!document.querySelector('#home-topic-input')", '首页作文题目输入框');
+      const metrics = await evaluate(`
+        (() => {
+          const ta = document.querySelector('#home-topic-input');
+          const card = ta.closest('.input-card');
+          const actions = document.querySelector('.quick-analyze .form-actions');
+          const taRect = ta.getBoundingClientRect();
+          const cardRect = card.getBoundingClientRect();
+          const actionsRect = actions.getBoundingClientRect();
+          const style = getComputedStyle(ta);
+          return {
+            rows: ta.rows,
+            width: taRect.width,
+            height: taRect.height,
+            cardWidth: cardRect.width,
+            taBottom: taRect.bottom,
+            actionsTop: actionsRect.top,
+            overflowY: style.overflowY,
+            docScrollWidth: document.documentElement.scrollWidth,
+            innerWidth: window.innerWidth,
+          };
+        })()
+      `);
+      assert.ok(metrics.rows >= 10, `默认可见行数应与「再剖析一道题」同标准，实际 rows=${metrics.rows}`);
+      assert.ok(metrics.height >= 300, `默认高度应明显增加，实际 ${metrics.height}px`);
+      assert.ok(metrics.width > 0 && metrics.width <= metrics.cardWidth + 1, '输入框宽度应随卡片自适应且不溢出');
+      assert.equal(metrics.overflowY, 'auto', '内容较多时应在框内滚动');
+      assert.ok(metrics.actionsTop >= metrics.taBottom, '输入框不应遮挡下方提交按钮');
+      assert.ok(metrics.docScrollWidth <= metrics.innerWidth + 1, '输入框不应造成横向溢出');
+
+      const longText = '长题目内容'.repeat(240);
+      const longMetrics = await evaluate(`
+        (() => {
+          const ta = document.querySelector('#home-topic-input');
+          const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set;
+          setter.call(ta, ${JSON.stringify(longText)});
+          ta.dispatchEvent(new Event('input', { bubbles: true }));
+          const counter = document.querySelector('.quick-analyze .counter').innerText.trim();
+          const result = { counter, scrollHeight: ta.scrollHeight, clientHeight: ta.clientHeight };
+          setter.call(ta, '');
+          ta.dispatchEvent(new Event('input', { bubbles: true }));
+          return result;
+        })()
+      `);
+      assert.ok(longMetrics.counter.includes(`${longText.length} / 2000`), `长文计数应正确，实际「${longMetrics.counter}」`);
+      assert.ok(longMetrics.scrollHeight > longMetrics.clientHeight, '长文应可在框内滚动查看而不是撑破布局');
+    });
+
     await check('浏览器：页面顶部固定展示「当前版本：vX」，刷新一致且桌面/窄屏不遮挡内容', async () => {
       const readVersion = () =>
         evaluate(`
@@ -392,8 +443,11 @@ async function runCdp(chrome, base, cdpPort, profile) {
 
       const first = await readVersion();
       assertLayout(first, '桌面端');
-      assert.match(first.text, /当前版本[:：]\s*v8$/, `当前交付版本应为 v8，实际「${first?.text}」`);
-      assert.ok(!first.text.includes('v7'), `不应再展示 v7，实际「${first?.text}」`);
+      assert.equal(
+        first.text,
+        `当前版本：${expectedVersion}`,
+        `当前交付版本应为 ${expectedVersion}，实际「${first?.text}」`
+      );
       assert.ok(
         await evaluate("document.querySelector('[data-testid=\"app-version\"]').closest('.app-version-bar') !== null"),
         '版本号应固定在页面顶部的版本栏内'

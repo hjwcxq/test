@@ -152,3 +152,26 @@ test('「再剖析一道题」输入框默认加高、宽度自适应，且保�
   assert.ok(minHeight, '应设置最小高度');
   assert.ok(Number(minHeight[1]) >= 300, `最小高度应明显增大，实际 ${minHeight[1]}px`);
 });
+
+test('首页作文题目输入框与「再剖析一道题」同标准加高、宽度自适应且保留校验', () => {
+  const home = read('web/src/pages/Home.jsx');
+  assert.ok(home.includes('id="home-topic-input"'), '首页应保留作文题目输入框');
+  assert.ok(home.includes('{topic.length} / {MAX_TOPIC_LENGTH} 字'), '2000 字计数应保留');
+  assert.ok(home.includes('请输入作文题目'), '空题目校验应保留');
+  assert.ok(home.includes('开始分析'), '提交按钮应保留');
+
+  const rows = home.match(/id="home-topic-input"[\s\S]*?rows=\{(\d+)\}/);
+  assert.ok(rows, '应能找到首页作文题目 textarea');
+  assert.ok(Number(rows[1]) >= 10, `首页默认可见行数应与「再剖析一道题」同标准，实际 rows=${rows[1]}`);
+
+  const css = read('web/src/styles.css');
+  const rule = css.match(/#home-topic-input[^{]*\{[\s\S]*?\}/);
+  assert.ok(rule, '首页输入框应具备独立样式，并命中 #home-topic-input');
+  assert.match(rule[0], /width:\s*100%/, '输入框宽度应随卡片自适应');
+  assert.match(rule[0], /max-width:\s*100%/, '输入框不得超出卡片宽度');
+  assert.match(rule[0], /overflow-y:\s*auto/, '内容较多时应可在框内滚动');
+  assert.match(rule[0], /resize:\s*vertical/, '应保留纵向缩放能力');
+  const minHeight = rule[0].match(/min-height:\s*(\d+)px/);
+  assert.ok(minHeight, '应设置最小高度');
+  assert.ok(Number(minHeight[1]) >= 300, `首页最小高度应与「再剖析一道题」一致，实际 ${minHeight[1]}px`);
+});

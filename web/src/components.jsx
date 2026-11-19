@@ -171,6 +171,78 @@ export function EssaySection({ prompt, index }) {
   );
 }
 
+/**
+ * 自定义剖析结果的配套范文与点评。
+ * 仅在接口返回 essay / review 时渲染；生成中或生成失败时整块不出现，
+ * 避免展示空白占位内容。
+ */
+export function CustomEssaySection({ essay, review, index }) {
+  if (!essay || typeof essay.body !== 'string' || !essay.body.trim()) return null;
+
+  const paragraphs = String(essay.body)
+    .split(/\n\s*\n/)
+    .map((part) => part.trim())
+    .filter(Boolean);
+  if (paragraphs.length === 0) return null;
+
+  const dimensions = [
+    ['立意', review?.intention],
+    ['结构', review?.structure],
+    ['亮点', review?.highlight],
+  ].filter(([, text]) => typeof text === 'string' && text.trim());
+
+  const wordCount = essay.wordCount || Array.from(essay.body.replace(/\s/g, '')).length;
+  const disclaimer = essay.disclaimer || '示范范文，仅供学习参考。';
+  const copyText = [essay.title, '', essay.body, '', disclaimer].join('\n').trim();
+
+  return (
+    <>
+      <Section
+        index={index}
+        title="范文"
+        description={`围绕本题生成的一篇完整示范作文，约 ${wordCount} 字，可对照立意与结构思路阅读。`}
+        className="essay-section custom-essay-section"
+      >
+        <article className="essay-card" data-testid="custom-essay">
+          <div className="essay-card-top">
+            <div>
+              <p className="essay-eyebrow">示范范文 · 约 {wordCount} 字</p>
+              <h3 className="essay-title">{essay.title}</h3>
+            </div>
+            <CopyButton text={copyText} label="复制范文" />
+          </div>
+          <div className="essay-body custom-essay-body">
+            {paragraphs.map((paragraph, i) => (
+              <p key={i}>{paragraph}</p>
+            ))}
+          </div>
+        </article>
+        <p className="essay-disclaimer" role="note">{disclaimer}</p>
+      </Section>
+
+      {dimensions.length > 0 && (
+        <Section
+          index={typeof index === 'number' ? index + 1 : undefined}
+          title="范文点评"
+          description="从立意、结构、亮点三方面说明本文的可借鉴之处。"
+          className="custom-essay-review-section"
+        >
+          <div className="essay-comment" data-testid="custom-essay-review">
+            <div className="card-grid card-grid-2">
+              {dimensions.map(([label, text]) => (
+                <div className="card mini-card" key={label}>
+                  <h4 className="mini-title">{label}</h4>
+                  <p>{text}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        </Section>
+      )}
+    </>
+  );
+}
+
 export function Card({ children, className = '' }) {
   return <div className={`card ${className}`}>{children}</div>;
 }

@@ -580,7 +580,7 @@ export function buildAdvice(topic, questionType, concepts) {
     ],
     risks: [
       ...picked.risks,
-      `注意：输入题目长度上限为 ${MAX_TOPIC_LENGTH} 字；本剖析仅为思路指导，不生成范文或评分。`,
+      `注意：输入题目长度上限为 ${MAX_TOPIC_LENGTH} 字；本剖析为思路指导，配套范文仅供学习参考，不作评分。`,
     ],
   };
 }

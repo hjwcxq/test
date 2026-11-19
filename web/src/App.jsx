@@ -63,7 +63,7 @@ export default function App() {
           </Link>
           <nav className="main-nav" aria-label="主导航">
             <NavLink to="/" end className={({ isActive }) => (isActive ? 'nav-active' : '')}>
-              题目库
+              真题题库
             </NavLink>
             <NavLink to="/analyze" className={({ isActive }) => (isActive ? 'nav-active' : '')}>
               自定义剖析

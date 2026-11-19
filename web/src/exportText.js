@@ -1,6 +1,6 @@
 /** 把结构化内容导出为可直接粘贴到笔记 / 文档中的纯文本（含立意与提纲）。 */
 
-/** 追加“精彩范文”段落；自定义剖析结果没有范文字段，调用时自然跳过。 */
+/** 追加内置题目自带的“精彩范文”段落；没有范文字段时自然跳过。 */
 function pushEssay(prompt, push) {
   if (!prompt?.essayTitle || !prompt?.essayBody) return;
   push('—— 精彩范文 ——');
@@ -14,6 +14,22 @@ function pushEssay(prompt, push) {
     if (comment[key]) push(`点评·${label}：${comment[key]}`);
   }
   if (prompt.essayDisclaimer) push(prompt.essayDisclaimer);
+}
+
+/** 追加自定义剖析生成的范文与点评；没有范文字段时自然跳过。 */
+function pushCustomEssay(result, push) {
+  if (!result?.essay?.body) return;
+  push('—— 范文 ——');
+  if (result.essay.title) push(result.essay.title);
+  for (const paragraph of String(result.essay.body).split(/\n\s*\n/)) {
+    if (paragraph.trim()) push(paragraph.trim());
+  }
+  if (result.essay.disclaimer) push(result.essay.disclaimer);
+  const review = result.review || {};
+  const labels = { intention: '立意', structure: '结构', highlight: '亮点' };
+  for (const [key, label] of Object.entries(labels)) {
+    if (review[key]) push(`范文点评·${label}：${review[key]}`);
+  }
 }
 
 export function resultToText(result) {
@@ -47,6 +63,8 @@ export function resultToText(result) {
     push(`   段落功能：${s.function}`);
     push(`   写作提示：${s.guidance}`);
   });
+
+  pushCustomEssay(result, push);
 
   push('—— 论证与素材建议 ——');
   for (const m of result.materials || []) {

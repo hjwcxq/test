@@ -15,6 +15,8 @@ const targets = [
   'server/analyzer.js',
   'server/data.js',
   'server/llm.js',
+  'server/essay.js',
+  'server/delivery-resources.js',
   'web/vite.config.js',
   'web/src/base.js',
   'web/src/api.js',
@@ -30,6 +32,7 @@ const targets = [
   'test/jiangsu.test.js',
   'test/zhejiang.test.js',
   'test/essays.test.js',
+  'test/custom-essay.test.js',
 ];
 
 for (const relative of targets) {
@@ -42,6 +45,7 @@ const analyzer = await import('../server/analyzer.js');
 const data = await import('../server/data.js');
 const app = await import('../server/app.js');
 const llm = await import('../server/llm.js');
+const essay = await import('../server/essay.js');
 
 assert.equal(typeof analyzer.analyzeLocal, 'function');
 assert.equal(typeof analyzer.detectQuestionType, 'function');
@@ -51,6 +55,10 @@ assert.equal(typeof data.loadJiangsuPrompts, 'function');
 assert.equal(typeof data.loadZhejiangPrompts, 'function');
 assert.equal(typeof app.createApp, 'function');
 assert.equal(typeof llm.analyzeTopic, 'function');
+assert.equal(typeof essay.generateCustomEssay, 'function');
+assert.equal(typeof essay.composeLocalEssay, 'function');
+assert.equal(essay.ESSAY_MIN_CHARS, 600);
+assert.equal(essay.ESSAY_MAX_CHARS, 1200);
 assert.equal(data.loadPrompts().length, 3);
 assert.equal(data.loadJiangsuPrompts().length, 3);
 assert.equal(data.loadZhejiangPrompts().length, 3);
@@ -62,6 +70,10 @@ for (const prompt of data.loadAllPrompts()) {
   assert.ok(data.countEssayChars(prompt.essayBody) >= data.ESSAY_MIN_CHARS, `${prompt.id} 范文字数不足`);
   assert.match(prompt.essayDisclaimer, /范文仅供学习参考/);
 }
-assert.equal(typeof (await llm.analyzeTopic('谈谈读书')).questionType.name, 'string');
+const smokeAnalysis = await llm.analyzeTopic('谈谈读书', {
+  essayGenerator: async (topic, analysis) => essay.composeLocalEssay(topic, analysis),
+});
+assert.equal(typeof smokeAnalysis.questionType.name, 'string');
+assert.ok(smokeAnalysis.essay?.body && smokeAnalysis.review?.intention);
 
 console.log(`[lint] 语法检查通过：${targets.length} 个文件；关键模块加载与导出校验通过。`);

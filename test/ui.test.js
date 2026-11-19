@@ -92,7 +92,7 @@ test('自定义题目输入框为空时使用「开始分析」并给出非空�
   const analyze = read('web/src/pages/Analyze.jsx');
   for (const source of [home, analyze]) {
     assert.ok(source.includes('开始分析'), '提交按钮应使用「开始分析」文案');
-    assert.ok(source.includes('不能为空'), '应有题目不能为空的校验提示');
+    assert.ok(source.includes('请输入作文题目'), '应有题目不能为空的校验提示');
   }
 });
 

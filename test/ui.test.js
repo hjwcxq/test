@@ -57,6 +57,13 @@ test('三套题库详情页均含可识别的「写作指导」与范文点评�
   assert.ok(components.includes('范文点评'), '点评板块应有独立标题');
 });
 
+test('首页提供独立的「写作指导」与「范文与点评」标签', () => {
+  const home = read('web/src/pages/Home.jsx');
+  assert.match(home, />写作指导</, '首页应有独立的「写作指导」文本节点');
+  assert.match(home, />范文与点评</, '首页应有独立的「范文与点评」文本节点');
+  assert.ok(home.includes('hero-badges'), '两个标签应位于首页首屏内容中');
+});
+
 test('首页真题题库同时展示上海、江苏、浙江三个地区入口与九道真题', () => {
   const home = read('web/src/pages/Home.jsx');
   for (const name of ['上海', '江苏', '浙江']) {

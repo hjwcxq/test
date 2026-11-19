@@ -20,7 +20,7 @@ const read = (file) => fs.readFileSync(path.join(root, file), 'utf8');
 const TEMPLATE =
   '<!doctype html><html><head><script>window.__APP_BASE_PATH__ = "__APP_BASE_PATH__";</script>' +
   '<script>window.__APP_VERSION__ = "__APP_VERSION__";</script></head><body>' +
-  '<span class="app-version" data-testid="app-version">当前版本：<strong data-version-value>__APP_VERSION_TEXT__</strong></span>' +
+  '<span class="app-version" data-testid="app-version">当前版本：__APP_VERSION_TEXT__</span>' +
   '<div id="root"></div></body></html>';
 
 test('版本号统一规范化为 vX，并过滤脚本注入字符', () => {
@@ -55,7 +55,7 @@ test('index.html 注入运行时版本与基础路径，重复渲染（刷新）
   assert.ok(first.includes('window.__APP_BASE_PATH__ = "/apps/p1";'));
   assert.ok(!first.includes('"__APP_VERSION__"'), '版本占位值必须被完全替换');
   assert.ok(!first.includes('"__APP_BASE_PATH__"'), '基础路径占位值必须被完全替换');
-  assert.match(first, /data-testid="app-version">当前版本：<strong data-version-value>v7\.6\.5<\/strong>/);
+  assert.match(first, /data-testid="app-version">当前版本：v7\.6\.5<\/span>/);
   assert.ok(!first.includes('__APP_VERSION_TEXT__'), '首屏版本号文本占位符必须被替换');
 
   const updated = renderIndexHtml(TEMPLATE, { basePath: '', version: 'v7.6.6' });
@@ -63,8 +63,8 @@ test('index.html 注入运行时版本与基础路径，重复渲染（刷新）
   assert.ok(!updated.includes('v7.6.5'));
 
   const escaped = renderIndexHtml(TEMPLATE, { version: '<img src=x onerror=alert(1)>' });
-  assert.ok(!escaped.includes('data-version-value><img'), '版本号文本必须做 HTML 转义');
-  assert.ok(escaped.includes('data-version-value>&lt;img'), '版本号文本应以 HTML 实体输出');
+  assert.ok(!escaped.includes('当前版本：<img'), '版本号文本必须做 HTML 转义');
+  assert.ok(escaped.includes('当前版本：&lt;img'), '版本号文本应以 HTML 实体输出');
 });
 
 test('GET /health 返回与部署配置一致的当前版本', async () => {
@@ -98,9 +98,15 @@ test('版本号随首屏 HTML 服务端输出，无需等待脚本即可被验�
   assert.ok(html.includes('id="app-version"'), '版本号应提供稳定 id');
 
   const rendered = renderIndexHtml(html, { basePath: '/apps/p1', version: 'v1.2.3' });
-  assert.match(rendered, /data-testid="app-version"[\s\S]*当前版本：<strong[^>]*>v1\.2\.3<\/strong>/);
+  assert.match(rendered, /data-testid="app-version"[\s\S]*当前版本：v1\.2\.3<\/span>/);
   assert.ok(!rendered.includes('__APP_VERSION_TEXT__'));
   assert.equal((rendered.match(/data-testid="app-version"/g) || []).length, 1);
+
+  // 版本号节点内部不能再嵌套元素：自动化验收常用 elementFromPoint 判断元素是否被遮挡，
+  // 若中心点命中的是 <strong> 等子元素，会把可见的版本号误判为不可见。
+  const tag = rendered.match(/<span[^>]*data-testid="app-version"[^>]*>([\s\S]*?)<\/span>/);
+  assert.ok(tag, '应能定位版本号节点');
+  assert.ok(!/<\/?[a-zA-Z][^>]*>/.test(tag[1]), `版本号节点内应为纯文本，实际「${tag[1].trim()}」`);
 
   const app = read('web/src/App.jsx');
   assert.ok(!/当前版本：v\d+\.\d+\.\d+/.test(app), '页面不应硬编码固定版本号');

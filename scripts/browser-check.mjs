@@ -831,6 +831,111 @@ async function runCdp(chrome, base, cdpPort, profile) {
       }
     });
 
+    await check('浏览器：结果页「再剖析一道题」输入框默认加高、随卡片自适应且不遮挡按钮', async () => {
+      await waitFor("!!document.querySelector('#result-topic-input')", '结果页再剖析输入框');
+      const metrics = await evaluate(`
+        (() => {
+          const ta = document.querySelector('#result-topic-input');
+          const card = ta.closest('.input-card');
+          const button = card.querySelector('[data-testid="analyze-button"]');
+          const taRect = ta.getBoundingClientRect();
+          const cardRect = card.getBoundingClientRect();
+          const btnRect = button.getBoundingClientRect();
+          return {
+            rows: ta.rows,
+            height: taRect.height,
+            width: taRect.width,
+            cardWidth: cardRect.width,
+            bottom: taRect.bottom,
+            buttonTop: btnRect.top,
+            role: ta.tagName.toLowerCase(),
+          };
+        })()
+      `);
+      assert.equal(metrics.role, 'textarea', '题目输入应仍是多行 textarea');
+      assert.ok(metrics.rows >= 10, `默认可见行数应明显增加，实际 rows=${metrics.rows}`);
+      assert.ok(metrics.height >= 300, `默认高度应明显增大，实际 ${metrics.height}px`);
+      assert.ok(metrics.width <= metrics.cardWidth, `输入框不应超出卡片，实际 ${metrics.width}/${metrics.cardWidth}`);
+      assert.ok(
+        metrics.width >= metrics.cardWidth - 60,
+        `输入框宽度应随卡片自适应，实际 ${metrics.width}/${metrics.cardWidth}`
+      );
+      assert.ok(
+        metrics.bottom <= metrics.buttonTop,
+        '输入框不应遮挡「开始分析」按钮'
+      );
+
+      // 窄屏与桌面下都应随卡片自适应，且不产生横向溢出。
+      for (const width of [375, 1024]) {
+        await send('Emulation.setDeviceMetricsOverride', {
+          width,
+          height: 900,
+          deviceScaleFactor: 1,
+          mobile: width < 600,
+        });
+        await new Promise((resolve) => setTimeout(resolve, 400));
+        const layout = await evaluate(`
+          (() => {
+            const ta = document.querySelector('#result-topic-input');
+            const card = ta.closest('.input-card');
+            const button = card.querySelector('[data-testid="analyze-button"]');
+            const taRect = ta.getBoundingClientRect();
+            const cardRect = card.getBoundingClientRect();
+            return {
+              width: taRect.width,
+              cardWidth: cardRect.width,
+              height: taRect.height,
+              bottom: taRect.bottom,
+              buttonTop: button.getBoundingClientRect().top,
+              pageOverflow: document.documentElement.scrollWidth - window.innerWidth,
+            };
+          })()
+        `);
+        assert.ok(layout.pageOverflow <= 1, `${width}px 下页面横向溢出：${layout.pageOverflow}px`);
+        assert.ok(layout.width <= layout.cardWidth, `${width}px 下输入框超出卡片`);
+        assert.ok(
+          layout.width >= layout.cardWidth - 60,
+          `${width}px 下输入框宽度未随卡片自适应：${layout.width}/${layout.cardWidth}`
+        );
+        assert.ok(layout.height >= 300, `${width}px 下输入框高度不足：${layout.height}px`);
+        assert.ok(layout.bottom <= layout.buttonTop, `${width}px 下输入框遮挡「开始分析」按钮`);
+      }
+      await send('Emulation.clearDeviceMetricsOverride').catch(() => {});
+      await new Promise((resolve) => setTimeout(resolve, 300));
+    });
+
+    await check('浏览器：结果页输入接近 2000 字时字数统计正常且输入框不溢出', async () => {
+      await evaluate(`
+        (() => {
+          const ta = document.querySelector('#result-topic-input');
+          const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set;
+          setter.call(ta, '题'.repeat(1995));
+          ta.dispatchEvent(new Event('input', { bubbles: true }));
+          return true;
+        })()
+      `);
+      await waitFor("document.querySelector('.counter').innerText.includes('1995')", '接近上限的字数统计');
+      const state = await evaluate(`
+        (() => {
+          const ta = document.querySelector('#result-topic-input');
+          const card = ta.closest('.input-card');
+          return {
+            counter: document.querySelector('.counter').innerText,
+            warn: !!card.querySelector('.field-warn'),
+            error: !!card.querySelector('.field-error'),
+            overflowX: ta.scrollWidth - ta.clientWidth,
+            pageOverflow: document.documentElement.scrollWidth - window.innerWidth,
+            height: ta.getBoundingClientRect().height,
+          };
+        })()
+      `);
+      assert.match(state.counter, /1995 \/ 2000 字/, '应保留 2000 字上限计数');
+      assert.ok(!state.warn, '未超上限不应出现超长警告');
+      assert.ok(!state.error, '未超上限不应出现校验错误');
+      assert.ok(state.overflowX <= 1, `长文本不应横向溢出，实际 ${state.overflowX}px`);
+      assert.ok(state.height >= 300, `长文本下输入框高度应保持，实际 ${state.height}px`);
+    });
+
     await check('浏览器：结果页换题重新生成时先显示范文加载态，更新后不残留上一题范文', async () => {
       // 人为延迟接口，确保能观察到「正在生成范文…」加载态。
       await evaluate(`

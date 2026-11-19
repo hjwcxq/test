@@ -77,11 +77,6 @@ function haystack(prompt) {
     .toLowerCase();
 }
 
-/** 地区入口跳转到该地区最近一年的真题详情，避免入口本身无反馈。 */
-function latestPrompt(list) {
-  return [...list].sort((a, b) => b.year - a.year)[0];
-}
-
 function excerptOf(prompt) {
   if (prompt.province === '江苏' || prompt.province === '浙江') return prompt.material;
   return prompt.original;
@@ -272,22 +267,19 @@ export default function Home() {
         )}
 
         <div className="region-overview" aria-label="地区题库入口">
-          {groups.map((group) => {
-            const latest = latestPrompt(group.prompts.length ? group.prompts : datasets[group.key] || []);
-            return (
-              <Link
-                key={group.key}
-                className="region-overview-card card"
-                to={latest ? `/prompts/${latest.id}` : '/'}
-              >
-                <span className="region-name">{group.name}</span>
-                <span className="region-overview-meta">
-                  {group.total} 题 · 2022—2024
-                </span>
-                <span className="region-overview-cta" aria-hidden="true">查看真题 →</span>
-              </Link>
-            );
-          })}
+          {groups.map((group) => (
+            <Link
+              key={group.key}
+              className="region-overview-card card"
+              to={`/region/${group.key}`}
+            >
+              <span className="region-name">{group.name}</span>
+              <span className="region-overview-meta">
+                {group.total > 0 ? `${group.total} 题` : '近三年真题'} · 2022—2024
+              </span>
+              <span className="region-overview-cta" aria-hidden="true">查看真题 →</span>
+            </Link>
+          ))}
         </div>
 
         <div className="filters">

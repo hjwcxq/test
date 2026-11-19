@@ -193,6 +193,7 @@ async function runCdp(chrome, base, cdpPort, profile) {
 
     let nextId = 0;
     const pending = new Map();
+    let eventHandler = null;
     ws.onmessage = (event) => {
       const message = JSON.parse(event.data);
       if (message.id && pending.has(message.id)) {
@@ -200,7 +201,9 @@ async function runCdp(chrome, base, cdpPort, profile) {
         pending.delete(message.id);
         if (message.error) entry.reject(new Error(JSON.stringify(message.error)));
         else entry.resolve(message.result);
+        return;
       }
+      if (message.method && eventHandler) eventHandler(message);
     };
     const send = (method, params = {}) =>
       new Promise((resolve, reject) => {
@@ -240,6 +243,100 @@ async function runCdp(chrome, base, cdpPort, profile) {
 
     await send('Page.enable');
     await send('Runtime.enable');
+
+    // ---- 请求拦截：把地区题库接口挂起，模拟真实的慢加载 / 加载失败场景 ----
+    const pausedRequests = [];
+    let releasePaused = false;
+    let requestMode = 'hold';
+
+    const enableRequestBlocking = async (patterns, mode = 'hold') => {
+      pausedRequests.length = 0;
+      releasePaused = false;
+      requestMode = mode;
+      eventHandler = (message) => {
+        if (message.method !== 'Fetch.requestPaused') return;
+        const { requestId } = message.params;
+        if (requestMode === 'fail') {
+          send('Fetch.failRequest', { requestId, errorReason: 'Failed' }).catch(() => {});
+          return;
+        }
+        if (releasePaused) {
+          send('Fetch.continueRequest', { requestId }).catch(() => {});
+        } else {
+          pausedRequests.push(requestId);
+        }
+      };
+      await send('Fetch.enable', { patterns });
+    };
+
+    const continuePausedRequests = async () => {
+      releasePaused = true;
+      const ids = pausedRequests.splice(0);
+      for (const requestId of ids) {
+        await send('Fetch.continueRequest', { requestId }).catch(() => {});
+      }
+      // 给仍在途的暂停事件留出自动放行的时间，再关闭拦截。
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      await send('Fetch.disable').catch(() => {});
+      eventHandler = null;
+    };
+
+    const stopRequestBlocking = async () => {
+      eventHandler = null;
+      await send('Fetch.disable').catch(() => {});
+    };
+
+    const clickBrowseLibrary = async () => {
+      const clicked = await evaluate(`
+        (() => {
+          const target = Array.from(document.querySelectorAll('button'))
+            .find((btn) => btn.textContent.trim() === '浏览真题题库');
+          if (!target) return false;
+          target.click();
+          return true;
+        })()
+      `);
+      assert.equal(clicked, true, '首页应存在「浏览真题题库」按钮');
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    };
+
+    const clickRegionCard = async (name) => {
+      const clicked = await evaluate(`
+        (() => {
+          const card = Array.from(document.querySelectorAll('.region-overview-card'))
+            .find((el) => el.querySelector('.region-name')?.textContent.trim() === ${JSON.stringify(name)});
+          if (!card) return false;
+          card.click();
+          return true;
+        })()
+      `);
+      assert.equal(clicked, true, `首页应有「${name}」地区入口`);
+    };
+
+    const assertEssayRendered = async (label) => {
+      const essay = await evaluate(`
+        (() => {
+          const section = document.querySelector('.essay-section');
+          if (!section) return null;
+          return {
+            title: section.querySelector('.essay-title')?.innerText || '',
+            body: section.querySelector('.essay-body')?.innerText || '',
+            paragraphs: section.querySelectorAll('.essay-body p').length,
+            comment: section.querySelector('.essay-comment')?.innerText || '',
+            disclaimer: section.querySelector('.essay-disclaimer')?.innerText || '',
+          };
+        })()
+      `);
+      assert.ok(essay, `${label}应渲染范文板块`);
+      assert.ok(essay.title.trim().length >= 2, `${label}范文应有标题`);
+      assert.ok(essay.body.trim().length > 300, `${label}范文正文应完整可读，实际 ${essay.body.trim().length} 字`);
+      assert.ok(essay.paragraphs >= 4, `${label}范文至少应有 4 个自然段`);
+      assert.ok(essay.comment.includes('范文点评'), `${label}应有独立点评区域`);
+      assert.ok(essay.comment.trim().length > 40, `${label}点评内容不应为空`);
+      assert.ok(essay.disclaimer.includes('范文仅供学习参考'), `${label}应有学习参考声明`);
+      return essay;
+    };
+
     await send('Page.navigate', { url: `${base}/apps/p1/` });
 
     await check('浏览器：/apps/p1/ 首页加载出 9 张真题卡片与三个地区入口', async () => {
@@ -901,6 +998,256 @@ async function runCdp(chrome, base, cdpPort, profile) {
       await waitFor("document.querySelectorAll('a.prompt-card').length === 9", '重试后恢复九题');
       text = await evaluate('document.body.innerText');
       assert.ok(text.includes('真题题库') && text.includes('上海') && text.includes('江苏') && text.includes('浙江'));
+    });
+
+    await check('浏览器回归（正常）：从「浏览真题题库」进入，点击江苏、浙江均到达真实详情', async () => {
+      await send('Emulation.clearDeviceMetricsOverride').catch(() => {});
+      await send('Page.navigate', { url: `${base}/apps/p1/` });
+      await waitFor("document.querySelectorAll('a.prompt-card').length === 9", '首页九题');
+
+      await clickBrowseLibrary();
+      assert.equal(await evaluate('window.location.hash'), '', '点击浏览题库不应改变路由');
+
+      await clickRegionCard('江苏');
+      await waitFor("document.body.innerText.includes('审题立意与写作提示')", '江苏真题详情');
+      let text = await evaluate('document.body.innerText');
+      assert.ok(text.includes('答案与问题'), '江苏入口应进入该地区最近一年真题');
+      await assertEssayRendered('江苏');
+
+      await evaluate("location.hash='#/'; true");
+      await waitFor("document.querySelectorAll('a.prompt-card').length === 9", '返回首页');
+      await clickBrowseLibrary();
+      await clickRegionCard('浙江');
+      await waitFor("document.body.innerText.includes('审题立意与写作指导')", '浙江真题详情');
+      text = await evaluate('document.body.innerText');
+      assert.ok(text.includes('答案与问题'), '浙江入口应进入该地区最近一年真题');
+      await assertEssayRendered('浙江');
+    });
+
+    await check('浏览器回归（慢加载）：阻塞江苏接口时，入口首屏 href 稳定并在释放后到达真实详情', async () => {
+      await enableRequestBlocking([
+        { urlPattern: '*/api/jiangsu/prompts*', requestStage: 'Request' },
+        { urlPattern: '*/api/zhejiang/prompts*', requestStage: 'Request' },
+      ]);
+      await send('Page.navigate', { url: `${base}/apps/p1/` });
+
+      // 地区接口被挂起时，首页仍应渲染三个地区入口，且 href 不能退化成 #/。
+      await waitFor("document.querySelectorAll('.region-overview-card').length === 3", '首屏地区入口');
+      await waitFor("document.body.innerText.includes('正在载入真题题库')", '首页加载态');
+      const jiangsuHref = await evaluate(`
+        Array.from(document.querySelectorAll('.region-overview-card'))
+          .find((el) => el.querySelector('.region-name')?.textContent.trim() === '江苏')
+          ?.getAttribute('href') || ''
+      `);
+      assert.ok(jiangsuHref.includes('/region/jiangsu'), `江苏入口首屏 href 应指向稳定地区路由，实际「${jiangsuHref}」`);
+
+      await clickBrowseLibrary();
+      assert.equal(await evaluate('window.location.hash'), '', '点击浏览题库不应改变路由');
+      await clickRegionCard('江苏');
+      await waitFor("window.location.hash === '#/region/jiangsu'", '江苏地区加载路由');
+      let text = await evaluate('document.body.innerText');
+      assert.ok(text.includes('正在载入江苏真题'), '接口未返回时应展示可靠加载态');
+      assert.ok(!text.includes('页面不存在'), '不能跳到不存在的页面');
+      assert.ok(!text.includes('真题题库'), '加载态下不应退回首页题库');
+
+      await continuePausedRequests();
+      await waitFor("document.body.innerText.includes('审题立意与写作提示')", '释放请求后的江苏详情', 20000);
+      text = await evaluate('document.body.innerText');
+      assert.ok(text.includes('答案与问题'), '释放请求后应进入江苏 2024 真题');
+      const jiangsuEssay = await assertEssayRendered('慢加载后的江苏');
+
+      // 题目切换：从地区列表真实点击 2022 年题目，范文与点评应随之更新。
+      await evaluate("location.hash='#/'; true");
+      await waitFor("document.querySelectorAll('#region-jiangsu a.prompt-card').length === 3", '江苏地区题目列表');
+      await evaluate(`
+        (() => {
+          const card = Array.from(document.querySelectorAll('#region-jiangsu a.prompt-card'))
+            .find((el) => el.textContent.includes('本手'));
+          if (!card) return false;
+          card.click();
+          return true;
+        })()
+      `);
+      await waitFor("document.body.innerText.includes('本手、妙手、俗手')", '切换江苏 2022 真题');
+      const switchedEssay = await assertEssayRendered('切换后的江苏 2022');
+      assert.notEqual(switchedEssay.title, jiangsuEssay.title, '切换题目后范文标题应更新');
+      assert.notEqual(switchedEssay.body, jiangsuEssay.body, '切换题目后范文正文应更新');
+    });
+
+    await check('浏览器回归（慢加载）：阻塞浙江接口时，点击浙江进入加载态并在释放后展示范文点评', async () => {
+      await enableRequestBlocking([
+        { urlPattern: '*/api/zhejiang/prompts*', requestStage: 'Request' },
+      ]);
+      await send('Page.navigate', { url: `${base}/apps/p1/` });
+      await waitFor("document.querySelectorAll('.region-overview-card').length === 3", '首屏地区入口');
+      await waitFor("document.body.innerText.includes('正在载入真题题库')", '首页加载态');
+
+      const zhejiangHref = await evaluate(`
+        Array.from(document.querySelectorAll('.region-overview-card'))
+          .find((el) => el.querySelector('.region-name')?.textContent.trim() === '浙江')
+          ?.getAttribute('href') || ''
+      `);
+      assert.ok(zhejiangHref.includes('/region/zhejiang'), `浙江入口首屏 href 应指向稳定地区路由，实际「${zhejiangHref}」`);
+
+      await clickBrowseLibrary();
+      await clickRegionCard('浙江');
+      await waitFor("window.location.hash === '#/region/zhejiang'", '浙江地区加载路由');
+      let text = await evaluate('document.body.innerText');
+      assert.ok(text.includes('正在载入浙江真题'), '接口未返回时应展示可靠加载态');
+      assert.ok(!text.includes('页面不存在'), '不能跳到不存在的页面');
+      assert.ok(!text.includes('真题题库'), '加载态下不应退回首页题库');
+
+      await continuePausedRequests();
+      await waitFor("document.body.innerText.includes('审题立意与写作指导')", '释放请求后的浙江详情', 20000);
+      text = await evaluate('document.body.innerText');
+      assert.ok(text.includes('答案与问题'), '释放请求后应进入浙江 2024 真题');
+      const zhejiangEssay = await assertEssayRendered('慢加载后的浙江');
+
+      await evaluate("location.hash='#/'; true");
+      await waitFor("document.querySelectorAll('#region-zhejiang a.prompt-card').length === 3", '浙江地区题目列表');
+      await evaluate(`
+        (() => {
+          const card = Array.from(document.querySelectorAll('#region-zhejiang a.prompt-card'))
+            .find((el) => el.textContent.includes('创新时代的青年担当'));
+          if (!card) return false;
+          card.click();
+          return true;
+        })()
+      `);
+      await waitFor("document.body.innerText.includes('创新时代的青年担当')", '切换浙江 2022 真题');
+      const switched = await assertEssayRendered('切换后的浙江 2022');
+      assert.notEqual(switched.title, zhejiangEssay.title, '切换浙江题目后范文标题应更新');
+      assert.notEqual(switched.body, zhejiangEssay.body, '切换浙江题目后范文正文应更新');
+    });
+
+    await check('浏览器回归（失败）：地区接口真实失败时展示错误与重试，重试后到达详情', async () => {
+      await enableRequestBlocking(
+        [{ urlPattern: '*/api/jiangsu/prompts*', requestStage: 'Request' }],
+        'fail'
+      );
+      await send('Page.navigate', { url: `${base}/apps/p1/` });
+      await waitFor("document.querySelectorAll('.region-overview-card').length === 3", '失败场景地区入口');
+
+      await clickBrowseLibrary();
+      await clickRegionCard('江苏');
+      await waitFor("document.body.innerText.includes('江苏真题加载失败')", '江苏地区加载失败提示');
+      let text = await evaluate('document.body.innerText');
+      assert.ok(text.includes('重新加载'), '地区加载失败应提供重试入口');
+      assert.ok(!text.includes('页面不存在'), '地区加载失败不应跳到不存在页面');
+      assert.ok(text.includes('返回题目库'), '地区加载失败应保留返回题目库入口');
+
+      await stopRequestBlocking();
+      await evaluate(
+        "Array.from(document.querySelectorAll('button')).find(b=>b.textContent.trim()==='重新加载').click(); true"
+      );
+      await waitFor("document.body.innerText.includes('审题立意与写作提示')", '重试后江苏详情', 20000);
+      text = await evaluate('document.body.innerText');
+      assert.ok(text.includes('答案与问题'), '重试成功后应进入江苏 2024 真题');
+      await assertEssayRendered('失败重试后的江苏');
+    });
+
+    await check('浏览器回归：按验收快照逐步重放 7 个场景', async () => {
+      await send('Page.navigate', { url: `${base}/apps/p1/` });
+      await waitFor("document.querySelectorAll('a.prompt-card').length === 9", '快照首页九题');
+
+      // 场景 1 / 6：首页真题题库非空，三个地区可见。
+      let text = await evaluate('document.body.innerText');
+      for (const needle of ['真题题库', '上海', '江苏', '浙江']) {
+        assert.ok(text.includes(needle), `场景 1 首页应含「${needle}」`);
+      }
+
+      // 场景 4：年份来源说明消失，但年份标签必须是可见元素而非隐藏 option。
+      assert.ok(!/内置\s*20\d{2}/.test(text), '场景 4 不应出现「内置 20XX」来源说明');
+      const yearState = await evaluate(`
+        (() => {
+          const chips = Array.from(document.querySelectorAll('.year-filters button'))
+            .filter((el) => el.offsetParent !== null)
+            .map((el) => el.textContent.trim());
+          const seals = Array.from(document.querySelectorAll('a.prompt-card .year-seal'))
+            .filter((el) => el.offsetParent !== null)
+            .map((el) => el.textContent.trim());
+          const hiddenOptions = document.querySelectorAll('option').length;
+          return { chips, seals, hiddenOptions };
+        })()
+      `);
+      for (const year of ['2022', '2023', '2024']) {
+        assert.ok(yearState.chips.includes(year), `场景 4 年份筛选「${year}」应可见`);
+        assert.ok(
+          yearState.seals.some((seal) => seal.includes(year)),
+          `场景 4 应有可见的 ${year} 年标签`
+        );
+      }
+      assert.equal(yearState.hiddenOptions, 0, '场景 4 年份不应依赖隐藏 option');
+
+      // 场景 2：点击「上海」进入详情，写作指导 / 范文 / 点评均可识别。
+      await clickRegionCard('上海');
+      await waitFor("document.body.innerText.includes('立意角度分层')", '场景 2 上海详情');
+      let visible = await evaluate(`
+        (() => {
+          const nodes = Array.from(document.querySelectorAll('a, button, span, p, h1, h2, h3, div'));
+          return ['写作指导', '范文', '点评'].map((label) => ({
+            label,
+            count: nodes.filter((el) => el.textContent.trim() === label && el.offsetParent !== null).length,
+          }));
+        })()
+      `);
+      for (const item of visible) {
+        assert.equal(item.count, 1, `场景 2 详情页「${item.label}」应可见且唯一`);
+      }
+      await assertEssayRendered('场景 2 上海');
+
+      // 场景 3：点击江苏看到范文，再切到浙江看到点评。
+      await evaluate("location.hash='#/'; true");
+      await waitFor("document.querySelectorAll('.region-overview-card').length === 3", '场景 3 返回首页');
+      await clickRegionCard('江苏');
+      await waitFor("document.body.innerText.includes('审题立意与写作提示')", '场景 3 江苏详情');
+      await assertEssayRendered('场景 3 江苏');
+      await evaluate(
+        "Array.from(document.querySelectorAll('.detail-nav-btn')).find(b=>b.textContent.trim()==='浙江').click(); true"
+      );
+      await waitFor("document.body.innerText.includes('审题立意与写作指导')", '场景 3 浙江详情');
+      text = await evaluate('document.body.innerText');
+      assert.ok(text.includes('范文点评'), '场景 3 浙江详情应有点评区域');
+      assert.ok(
+        await evaluate("!!document.querySelector('#essay-comment')"),
+        '场景 3 点评应有可定位区域'
+      );
+
+      // 场景 7：从首页点击浙江入口可直接看到范文。
+      await evaluate("location.hash='#/'; true");
+      await waitFor("document.querySelectorAll('.region-overview-card').length === 3", '场景 7 返回首页');
+      await clickRegionCard('浙江');
+      await waitFor("document.body.innerText.includes('审题立意与写作指导')", '场景 7 浙江详情');
+      await assertEssayRendered('场景 7 浙江');
+
+      // 场景 5：空 textarea 可提交并显示提示，且不发起剖析请求。
+      await evaluate("location.hash='#/'; true");
+      await waitFor("!!document.querySelector('#home-topic-input')", '场景 5 首页输入框');
+      await evaluate(`
+        (() => {
+          const ta = document.querySelector('#home-topic-input');
+          const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set;
+          setter.call(ta, '');
+          ta.dispatchEvent(new Event('input', { bubbles: true }));
+          window.__origFetchForEmpty = window.fetch;
+          window.__analyzeCalls = [];
+          window.fetch = (...args) => {
+            window.__analyzeCalls.push(String(args[0]));
+            return window.__origFetchForEmpty.apply(window, args);
+          };
+          return true;
+        })()
+      `);
+      await evaluate(
+        "Array.from(document.querySelectorAll('button')).find(b=>b.textContent.trim()==='开始分析').click(); true"
+      );
+      await waitFor("document.body.innerText.includes('题目不能为空')", '场景 5 空题目提示');
+      const calls = await evaluate('window.__analyzeCalls');
+      assert.ok(
+        !calls.some((url) => url.includes('/api/analyze')),
+        `场景 5 空题目不应发起剖析请求，实际请求：${JSON.stringify(calls)}`
+      );
+      await evaluate('window.fetch = window.__origFetchForEmpty; true');
     });
   } finally {
     if (ws) ws.close();

@@ -3,6 +3,7 @@ import { Link, NavLink, Route, Routes } from 'react-router-dom';
 import { EmptyState, ErrorState } from './components.jsx';
 import Home from './pages/Home.jsx';
 import Detail from './pages/Detail.jsx';
+import Region from './pages/Region.jsx';
 import Analyze from './pages/Analyze.jsx';
 import Result from './pages/Result.jsx';
 
@@ -76,6 +77,7 @@ export default function App() {
           <Routes>
             <Route path="/" element={<Home />} />
             <Route path="/prompts/:id" element={<Detail />} />
+            <Route path="/region/:region" element={<Region />} />
             <Route path="/analyze" element={<Analyze />} />
             <Route path="/result" element={<Result />} />
             <Route path="*" element={<NotFound />} />

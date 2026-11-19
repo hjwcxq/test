@@ -128,3 +128,27 @@ test('地区入口使用稳定的 /region 路由，加载中点击也不会退�
     '地区入口解析完成后应跳转到真实题目详情而非首页'
   );
 });
+
+test('「再剖析一道题」输入框默认加高、宽度自适应，且保留字数限制与提交入口', () => {
+  const result = read('web/src/pages/Result.jsx');
+  assert.ok(result.includes('再剖析一道题'), '结果页应保留「再剖析一道题」板块');
+  assert.ok(
+    result.includes('粘贴或输入另一道作文题，重新生成剖析与范文'),
+    '输入框占位提示应保留'
+  );
+  assert.ok(result.includes('{MAX_TOPIC_LENGTH} 字'), '2000 字字数统计应保留');
+  assert.ok(result.includes('开始分析'), '「开始分析」按钮应保留');
+
+  const rows = result.match(/id="result-topic-input"[\s\S]*?rows=\{(\d+)\}/);
+  assert.ok(rows, '应能找到结果页的作文题目 textarea');
+  assert.ok(Number(rows[1]) >= 10, `默认可见行数应明显增加，实际 rows=${rows[1]}`);
+
+  const css = read('web/src/styles.css');
+  const rule = css.match(/#result-topic-input \{[\s\S]*?\}/);
+  assert.ok(rule, '结果页输入框应具备独立样式');
+  assert.match(rule[0], /width:\s*100%/, '输入框宽度应随卡片自适应');
+  assert.match(rule[0], /resize:\s*vertical/, '应保留纵向缩放能力');
+  const minHeight = rule[0].match(/min-height:\s*(\d+)px/);
+  assert.ok(minHeight, '应设置最小高度');
+  assert.ok(Number(minHeight[1]) >= 300, `最小高度应明显增大，实际 ${minHeight[1]}px`);
+});

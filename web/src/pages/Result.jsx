@@ -244,7 +244,7 @@ export default function Result() {
               }
             }}
             placeholder="粘贴或输入另一道作文题，重新生成剖析与范文"
-            rows={4}
+            rows={12}
             spellCheck={false}
           />
           {topicError && (

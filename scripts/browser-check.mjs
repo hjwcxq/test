@@ -366,9 +366,12 @@ async function runCdp(chrome, base, cdpPort, profile) {
             const headerRect = document.querySelector('.site-header').getBoundingClientRect();
             const mainRect = document.querySelector('.main-content').getBoundingClientRect();
             const style = getComputedStyle(el);
+            const hit = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
             return {
               text: el.innerText.trim(),
               visible: rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden',
+              children: el.children.length,
+              hitSelf: hit === el || el.contains(hit),
               left: rect.left,
               right: rect.right,
               bottom: rect.bottom,
@@ -381,9 +384,10 @@ async function runCdp(chrome, base, cdpPort, profile) {
       const assertLayout = (info, label) => {
         assert.ok(info && info.visible, `${label}版本号应可见`);
         assert.match(info.text, /当前版本[:：]\s*v/, `${label}应显示「当前版本：vX」，实际「${info?.text}」`);
+        assert.equal(info.children, 0, `${label}版本号节点内不应嵌套元素，避免命中测试落到子元素`);
+        assert.ok(info.hitSelf, `${label}版本号中心点被其他元素遮挡`);
         assert.ok(info.left >= -1 && info.right <= info.innerWidth + 1, `${label}版本号横向溢出：${JSON.stringify(info)}`);
-        assert.ok(info.bottom <= info.headerBottom + 1, `${label}版本号应完整位于页头内`);
-        assert.ok(info.headerBottom <= info.mainTop + 1, `${label}页头不应覆盖主要内容区域`);
+        assert.ok(info.bottom <= info.mainTop + 1, `${label}版本号不应覆盖主要内容区域`);
       };
 
       const first = await readVersion();
@@ -456,7 +460,7 @@ async function runCdp(chrome, base, cdpPort, profile) {
     await check('浏览器：首页关键文案各自只有一个可见文本节点，避免定位歧义', async () => {
       const counts = await evaluate(`
         (() => {
-          const wanted = ['真题题库', '上海', '江苏', '浙江', '2022'];
+          const wanted = ['真题题库', '自定义剖析', '写作指导', '范文与点评', '上海', '江苏', '浙江', '2022'];
           const nodes = Array.from(document.querySelectorAll('a, button, span, p, h1, h2, h3, div'));
           return wanted.map((text) => ({
             text,

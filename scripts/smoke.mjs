@@ -95,8 +95,14 @@ async function main() {
         );
         assert.ok(html.includes('当前版本：'), `${url} 首屏 HTML 应包含「当前版本」文案`);
         assert.ok(
-          html.includes(`当前版本：<strong data-version-value>${expectedVersion}</strong>`),
+          html.includes(`当前版本：${expectedVersion}</span>`),
           `${url} 首屏版本号文本应与部署版本一致`
+        );
+        const versionNode = html.match(/<span[^>]*data-testid="app-version"[^>]*>([\s\S]*?)<\/span>/);
+        assert.ok(versionNode, `${url} 应能定位版本号节点`);
+        assert.ok(
+          !/<[a-zA-Z]/.test(versionNode[1]),
+          `${url} 版本号节点内应为纯文本，避免命中测试落到子元素`
         );
         assert.ok(!html.includes('__APP_VERSION_TEXT__'), `${url} 不应残留版本文本占位符`);
         assert.equal(

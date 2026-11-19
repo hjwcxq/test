@@ -154,12 +154,18 @@ function serveIndex(req, res, version, status = 200) {
       );
   }
   const rendered = renderIndexHtml(html, { basePath: resolveBase(req), version });
+  // 页面内嵌部署版本与基础路径，任何一层缓存陈旧都会让刷新后看到旧版本号，
+  // 因此 HTML 一律不缓存；静态资源仍使用文件名指纹与长缓存。
+  res.setHeader('Cache-Control', 'no-store, max-age=0');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Vary', 'X-Forwarded-Prefix');
   return res.status(status).type('html').send(rendered);
 }
 
 function health(version) {
-  return (_req, res) =>
-    res.status(200).json({
+  return (_req, res) => {
+    res.setHeader('Cache-Control', 'no-store, max-age=0');
+    return res.status(200).json({
       status: 'ok',
       healthy: true,
       service: 'wensi-essay-guide',
@@ -167,6 +173,7 @@ function health(version) {
       uptimeSeconds: Math.floor(process.uptime()),
       timestamp: new Date().toISOString(),
     });
+  };
 }
 
 /** API 路由（会被同时挂载到 /api 与 /apps/p1/api）。 */

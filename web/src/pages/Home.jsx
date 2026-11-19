@@ -227,6 +227,10 @@ export default function Home() {
             </button>
           </div>
           <p className="hero-note">内置真题均配一篇完整精彩范文与四维点评；自定义剖析给出解题思路，并围绕您粘贴的题目生成一篇示范范文与点评，不评分、不逐句批改。</p>
+          <div className="hero-badges" aria-label="每道真题配套内容">
+            <span className="hero-badge">写作指导</span>
+            <span className="hero-badge">范文与点评</span>
+          </div>
         </div>
       </section>
 
@@ -368,7 +372,7 @@ export default function Home() {
 
       <section className="quick-analyze" aria-label="自定义题目剖析">
         <div className="quick-analyze-head">
-          <p className="eyebrow">自定义剖析</p>
+          <p className="eyebrow">自定义题目剖析</p>
           <h2>新增一道题目，立即生成写作剖析</h2>
           <p className="muted">粘贴任意作文题，系统会判定题型、抽取概念与限制条件，并给出立意与提纲。</p>
         </div>

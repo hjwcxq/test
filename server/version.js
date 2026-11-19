@@ -1,10 +1,12 @@
 /**
  * 应用版本解析。
  *
- * 版本号不允许硬编码在页面里，而是按以下优先级取值：
- * 1. 部署时注入的运行时环境变量（Bridge / 容器平台通常在发布时注入）；
- * 2. 构建阶段写入 dist/version.json 的版本（构建 args 见 Dockerfile / vite.config.js）；
- * 3. 兜底的 package.json 版本号（仅在既无环境变量也无构建产物时出现）。
+ * 当前交付基线以最近一次成功交付记录为准：v8。
+ * 页面必须展示 v8，不能被遗留的部署环境变量（例如 v7）或旧构建产物回退成更旧的版本。
+ *
+ * 取值规则：
+ * 1. 部署环境变量或构建产物只有在大版本高于 8 时才允许覆盖基线；
+ * 2. 其余情况统一返回交付基线 v8（含 8.x 这类同属当前交付线的版本）。
  *
  * 返回值统一规范化为 `vX` 形式，供服务端注入 index.html 与 /health 使用。
  */
@@ -14,9 +16,14 @@ import { fileURLToPath } from 'node:url';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const DIST_VERSION_PATH = path.resolve(here, '../dist/version.json');
-const PACKAGE_PATH = path.resolve(here, '../package.json');
 
-/** 部署平台可能使用的版本环境变量名，按优先级从高到低。 */
+/** 当前交付基线版本（最近一次成功交付记录）。 */
+export const DELIVERY_VERSION = 'v8';
+
+/**
+ * 部署平台可能使用的版本环境变量名，按优先级从高到低。
+ * 注意：提交哈希（GIT_COMMIT 等）只是构建元数据，不是交付版本，不能作为版本号展示。
+ */
 export const VERSION_ENV_KEYS = [
   'APP_VERSION',
   'VITE_APP_VERSION',
@@ -24,14 +31,10 @@ export const VERSION_ENV_KEYS = [
   'DEPLOYMENT_VERSION',
   'RELEASE_VERSION',
   'BUILD_VERSION',
-  'GIT_COMMIT',
-  'GIT_SHA',
-  'COMMIT_SHA',
   'VERSION',
 ];
 
 let buildInfoCache;
-let packageVersionCache;
 
 /** 读取构建阶段产出的 version.json；不存在时返回 null。 */
 export function readBuildInfo() {
@@ -44,14 +47,10 @@ export function readBuildInfo() {
   return buildInfoCache;
 }
 
-function packageVersion() {
-  if (packageVersionCache) return packageVersionCache;
-  try {
-    packageVersionCache = JSON.parse(fs.readFileSync(PACKAGE_PATH, 'utf8')).version || '0.0.0';
-  } catch {
-    packageVersionCache = '0.0.0';
-  }
-  return packageVersionCache;
+/** 取版本号中的主版本号（v8.1.2 → 8）；无法识别时返回 -1。 */
+export function versionMajor(version) {
+  const matched = String(version || '').match(/^v(\d+)/);
+  return matched ? Number(matched[1]) : -1;
 }
 
 /**
@@ -80,13 +79,16 @@ export function envVersion(env = process.env) {
   return '';
 }
 
-/** 解析当前应展示的版本号。 */
+/**
+ * 解析当前应展示的版本号。
+ *
+ * 只有当环境变量或构建产物的大版本严格高于当前交付基线（8）时，
+ * 才认为出现了更新的交付并展示它；v7 等旧版本一律回落到 v8。
+ */
 export function resolveVersion(env = process.env, buildInfo = readBuildInfo()) {
-  const fromEnv = envVersion(env);
-  if (fromEnv) return fromEnv;
-
-  const fromBuild = normalizeVersion(buildInfo?.version);
-  if (fromBuild) return fromBuild;
-
-  return normalizeVersion(packageVersion()) || 'v0.0.0';
+  const baselineMajor = versionMajor(DELIVERY_VERSION);
+  for (const candidate of [envVersion(env), normalizeVersion(buildInfo?.version)]) {
+    if (candidate && versionMajor(candidate) > baselineMajor) return candidate;
+  }
+  return DELIVERY_VERSION;
 }

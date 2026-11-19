@@ -1,34 +1,19 @@
 import { defineConfig, loadEnv } from 'vite';
 import react from '@vitejs/plugin-react';
-import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { envVersion, normalizeVersion } from '../server/version.js';
+import { resolveVersion } from '../server/version.js';
 
 const webRoot = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(webRoot, '..');
 
 /**
- * 构建期版本号：
- * - 优先使用部署/构建注入的环境变量（APP_VERSION、VITE_APP_VERSION、BUILD_VERSION、GIT_COMMIT 等）；
- * - 未提供时用「package 版本 + 构建时间戳」生成唯一版本，保证每次构建/部署都会变化，
- *   绝不会把某个固定旧版本硬编码进页面。
+ * 构建期版本号：与运行期共用同一套解析规则。
+ * 默认取当前交付基线 v8；只有部署/构建显式注入更高的大版本时才覆盖，
+ * 避免旧环境变量或旧构建记录把页面版本回退成 v7 等旧版本。
  */
 function resolveBuildVersion(env) {
-  const fromEnv = envVersion(env);
-  if (fromEnv) return fromEnv;
-
-  let pkgVersion = '0.0.0';
-  try {
-    pkgVersion = JSON.parse(fs.readFileSync(path.join(projectRoot, 'package.json'), 'utf8')).version || pkgVersion;
-  } catch {
-    // 使用兜底版本
-  }
-
-  const commit = env.GIT_COMMIT || env.GIT_SHA || env.COMMIT_SHA;
-  const stamp = new Date().toISOString().replace(/[-:]/g, '').replace('T', '.').replace('Z', '');
-  const suffix = commit ? commit.slice(0, 7) : `build.${stamp}`;
-  return normalizeVersion(`${pkgVersion}+${suffix}`) || 'v0.0.0';
+  return resolveVersion(env, null);
 }
 
 /** 把版本写入 dist/version.json，运行阶段（未注入环境变量时）从这里读取。 */

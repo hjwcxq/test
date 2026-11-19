@@ -392,6 +392,8 @@ async function runCdp(chrome, base, cdpPort, profile) {
 
       const first = await readVersion();
       assertLayout(first, '桌面端');
+      assert.match(first.text, /当前版本[:：]\s*v8$/, `当前交付版本应为 v8，实际「${first?.text}」`);
+      assert.ok(!first.text.includes('v7'), `不应再展示 v7，实际「${first?.text}」`);
       assert.ok(
         await evaluate("document.querySelector('[data-testid=\"app-version\"]').closest('.app-version-bar') !== null"),
         '版本号应固定在页面顶部的版本栏内'

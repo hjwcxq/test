@@ -1,7 +1,7 @@
 /**
  * 版本号展示的针对性测试：
  * 1. 版本规范化为「vX」且过滤不安全字符；
- * 2. 版本按「部署环境变量 > 构建产物 > package.json」优先级解析，绝不硬编码旧版本；
+ * 2. 版本以最近一次成功交付 v8 为准，v7 等旧版本不得覆盖；
  * 3. index.html 模板注入版本与基础路径后可重复渲染（刷新一致）；
  * 4. /health 返回当前版本，便于与发布记录核对；
  * 5. 前端页面从统一版本模块读取并带 data-testid，构建脚本产出 version.json。
@@ -12,7 +12,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createApp, renderIndexHtml } from '../server/app.js';
-import { envVersion, normalizeVersion, resolveVersion } from '../server/version.js';
+import { DELIVERY_VERSION, envVersion, normalizeVersion, resolveVersion } from '../server/version.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const read = (file) => fs.readFileSync(path.join(root, file), 'utf8');
@@ -36,15 +36,18 @@ test('版本号统一规范化为 vX，并过滤脚本注入字符', () => {
   assert.equal(normalizeVersion('__APP_VERSION__'), '');
 });
 
-test('版本来源优先级：部署环境变量 > 构建产物 > package 版本', () => {
+test('版本展示以最近一次成功交付 v8 为准，v7 等旧版本不得覆盖', () => {
   assert.equal(envVersion({ APP_VERSION: '2.0.0' }), 'v2.0.0');
   assert.equal(envVersion({ DELIVERY_VERSION: 'v3.1.0' }), 'v3.1.0');
   assert.equal(envVersion({ APP_VERSION: '', BUILD_VERSION: '4.2.1' }), 'v4.2.1');
   assert.equal(envVersion({ APP_VERSION: '   ' }), '');
-  assert.equal(resolveVersion({ APP_VERSION: '9.9.9' }, { version: 'v1.0.0' }), 'v9.9.9');
-  assert.equal(resolveVersion({}, { version: 'v5.4.3' }), 'v5.4.3');
-  assert.match(resolveVersion({}, null), /^v\d+\.\d+\.\d+/);
-  assert.notEqual(resolveVersion({}, null), '');
+
+  assert.equal(DELIVERY_VERSION, 'v8', '当前交付记录为 v8');
+  assert.equal(resolveVersion({}, null), 'v8', '无任何注入时应展示交付记录 v8');
+  assert.equal(resolveVersion({ APP_VERSION: 'v7.6.5' }, null), 'v8', '遗留的 v7 环境变量不得展示');
+  assert.equal(resolveVersion({}, { version: 'v7.0.0' }), 'v8', '旧构建产物不得把版本回退到 v7');
+  assert.equal(resolveVersion({ APP_VERSION: '9.9.9' }, { version: 'v1.0.0' }), 'v9.9.9', '更高的新交付版本允许覆盖');
+  assert.equal(envVersion({ GIT_COMMIT: 'a24affb' }), '', '提交哈希是构建元数据，不能当作展示版本');
 });
 
 test('index.html 注入运行时版本与基础路径，重复渲染（刷新）结果一致', () => {
@@ -101,6 +104,11 @@ test('版本号随首屏 HTML 服务端输出，无需等待脚本即可被验�
   assert.match(rendered, /data-testid="app-version"[\s\S]*当前版本：v1\.2\.3<\/span>/);
   assert.ok(!rendered.includes('__APP_VERSION_TEXT__'));
   assert.equal((rendered.match(/data-testid="app-version"/g) || []).length, 1);
+
+  // 本次交付的默认渲染结果：版本区域直接显示 v8，且不残留 v7。
+  const delivery = renderIndexHtml(html, { basePath: '/apps/p1', version: resolveVersion({}, null) });
+  assert.match(delivery, /data-testid="app-version"[^>]*>当前版本：v8<\/span>/, '首屏版本区域应显示 v8');
+  assert.ok(!delivery.includes('当前版本：v7'), '页面不得再展示 v7');
 
   // 版本号节点内部不能再嵌套元素：自动化验收常用 elementFromPoint 判断元素是否被遮挡，
   // 若中心点命中的是 <strong> 等子元素，会把可见的版本号误判为不可见。

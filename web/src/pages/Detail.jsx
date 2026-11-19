@@ -1,8 +1,54 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import { getPrompt } from '../api.js';
 import { Badge, CopyButton, ErrorState, EssaySection, LoadingState, Section } from '../components.jsx';
 import { jiangsuPromptToText, promptToText, zhejiangPromptToText } from '../exportText.js';
+
+/** 详情页顶部的地区切换入口；跳转到该地区最近一年真题，保证点击后有明确内容。 */
+const REGION_LINKS = [
+  { name: '上海', id: 'shanghai-2024' },
+  { name: '江苏', id: 'jiangsu-2024' },
+  { name: '浙江', id: 'zhejiang-2024' },
+];
+
+function scrollToSection(id) {
+  const target = document.getElementById(id);
+  if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function DetailNav({ activeRegion }) {
+  const navigate = useNavigate();
+  return (
+    <nav className="detail-nav" aria-label="本页导航与地区切换">
+      <div className="detail-nav-group">
+        <span className="detail-nav-label">本页导航</span>
+        <button type="button" className="detail-nav-btn" onClick={() => scrollToSection('writing-guide')}>
+          写作指导
+        </button>
+        <button type="button" className="detail-nav-btn" onClick={() => scrollToSection('essay')}>
+          范文
+        </button>
+        <button type="button" className="detail-nav-btn" onClick={() => scrollToSection('essay-comment')}>
+          点评
+        </button>
+      </div>
+      <div className="detail-nav-group">
+        <span className="detail-nav-label">切换地区</span>
+        {REGION_LINKS.map((region) => (
+          <button
+            key={region.id}
+            type="button"
+            className={`detail-nav-btn ${region.name === activeRegion ? 'is-active' : ''}`}
+            aria-current={region.name === activeRegion ? 'true' : undefined}
+            onClick={() => navigate(`/prompts/${region.id}`)}
+          >
+            {region.name}
+          </button>
+        ))}
+      </div>
+    </nav>
+  );
+}
 
 function ZhejiangDetail({ prompt }) {
   return (
@@ -14,6 +60,8 @@ function ZhejiangDetail({ prompt }) {
         <span aria-hidden="true">/</span>
         <span>{prompt.year} 年 {prompt.title}</span>
       </nav>
+
+      <DetailNav activeRegion="浙江" />
 
       <header className="detail-head">
         <div>
@@ -41,7 +89,7 @@ function ZhejiangDetail({ prompt }) {
         <p className="requirements-text">{prompt.requirements}</p>
       </Section>
 
-      <Section index={3} title="审题立意" description="先解释题目在问什么，再确定文章的中心判断。">
+      <Section index={3} title="审题立意" description="先解释题目在问什么，再确定文章的中心判断。" id="writing-guide">
         <p className="lead-text">{prompt.concept}</p>
         <ol className="number-list">
           {(prompt.reviewPoints || []).map((point, i) => <li key={i}>{point}</li>)}
@@ -171,6 +219,8 @@ function JiangsuDetail({ prompt }) {
         <span>{prompt.year} 年 {prompt.title}</span>
       </nav>
 
+      <DetailNav activeRegion="江苏" />
+
       <header className="detail-head">
         <div>
           <div className="detail-badges">
@@ -195,7 +245,7 @@ function JiangsuDetail({ prompt }) {
         <p className="requirements-text">{prompt.requirements}</p>
       </Section>
 
-      <Section index={3} title="审题立意" description="先解释题目在问什么，再确定文章的中心判断。">
+      <Section index={3} title="审题立意" description="先解释题目在问什么，再确定文章的中心判断。" id="writing-guide">
         <p className="lead-text">{prompt.concept}</p>
         <ol className="number-list">
           {(prompt.reviewPoints || []).map((point, i) => <li key={i}>{point}</li>)}
@@ -287,6 +337,8 @@ export default function Detail() {
         <span>{prompt.title}</span>
       </nav>
 
+      <DetailNav activeRegion="上海" />
+
       <header className="detail-head">
         <div>
           <div className="detail-badges">
@@ -328,7 +380,7 @@ export default function Detail() {
         <p className="lead-text">{prompt.conceptRelations}</p>
       </Section>
 
-      <Section index={5} title="立意角度分层" description={`共 ${prompt.angles?.length || 0} 个角度，标注切题度与层次，可按自己的擅长选择主论点。`}>
+      <Section index={5} title="立意角度分层" description={`共 ${prompt.angles?.length || 0} 个角度，标注切题度与层次，可按自己的擅长选择主论点。`} id="writing-guide">
         <div className="angle-list">
           {(prompt.angles || []).map((a, i) => (
             <article className="card angle-card" key={i}>

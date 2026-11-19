@@ -82,9 +82,9 @@ export function EmptyState({ title, description, action }) {
   );
 }
 
-export function Section({ index, title, description, children, className = '' }) {
+export function Section({ index, title, description, children, className = '', id }) {
   return (
-    <section className={`section ${className}`}>
+    <section className={`section ${className}`} id={id}>
       <div className="section-head">
         {index != null && <span className="section-index">{String(index).padStart(2, '0')}</span>}
         <div>
@@ -133,6 +133,7 @@ export function EssaySection({ prompt, index }) {
       title="精彩范文"
       description="一篇完整示范作文，附立意、结构、语言与可借鉴处的点评，供对照学习。"
       className="essay-section"
+      id="essay"
     >
       <article className="essay-card">
         <div className="essay-card-top">
@@ -150,7 +151,7 @@ export function EssaySection({ prompt, index }) {
       </article>
 
       {dimensions.length > 0 && (
-        <div className="essay-comment">
+        <div className="essay-comment" id="essay-comment">
           <h3 className="mini-title">范文点评</h3>
           <div className="card-grid card-grid-2">
             {dimensions.map(([label, text]) => (

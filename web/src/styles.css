@@ -441,6 +441,49 @@ textarea:focus-visible {
 .library-head h2 { font-size: 25px; letter-spacing: 1px; }
 .library-head .muted { font-size: 13.5px; margin-top: 5px; }
 
+/* 地区总览：上海 / 江苏 / 浙江 三个入口始终可见，点击直达该地区最新真题。 */
+.region-overview {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin: 18px 0 16px;
+}
+.region-overview-card {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+  padding: 14px 18px;
+  text-decoration: none;
+  color: var(--ink-soft);
+  transition: transform 0.18s, box-shadow 0.18s, border-color 0.18s;
+}
+.region-overview-card:hover {
+  transform: translateY(-2px);
+  border-color: var(--seal);
+  box-shadow: 0 8px 24px rgba(74, 62, 42, 0.12);
+}
+.region-name {
+  font-family: var(--serif);
+  font-size: 21px;
+  font-weight: 700;
+  color: var(--seal);
+  letter-spacing: 2px;
+}
+.region-overview-meta { font-size: 12.5px; color: var(--muted); }
+.region-overview-cta { margin-top: 4px; font-size: 12.5px; color: var(--seal); font-weight: 600; }
+
+.region-group { margin-top: 28px; }
+.region-group-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+.region-group-head h3 { font-size: 20px; letter-spacing: 1px; }
+.region-group-head .muted { flex: 1 1 240px; font-size: 13px; }
+
 .filters {
   display: flex;
   flex-wrap: wrap;
@@ -535,7 +578,47 @@ textarea:focus-visible {
 }
 .prompt-card-foot .arrow { color: var(--seal); font-weight: 600; }
 
+.quick-analyze { margin-top: 46px; scroll-margin-top: 86px; }
+.quick-analyze-head { margin-bottom: 14px; }
+.quick-analyze-head h2 { font-size: 25px; letter-spacing: 1px; }
+.quick-analyze-head .muted { font-size: 13.5px; margin-top: 5px; }
+.quick-analyze .input-card { max-width: 860px; }
+
 /* ---------- 详情页 / 结果页 ---------- */
+.detail-nav {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px 20px;
+  margin-bottom: 20px;
+  padding: 10px 14px;
+  border: 1px solid var(--line-soft);
+  border-radius: 9px;
+  background: rgba(255, 253, 247, 0.8);
+}
+.detail-nav-group { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-width: 0; }
+.detail-nav-label { font-size: 12.5px; color: var(--muted); }
+.detail-nav-btn {
+  padding: 5px 12px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--card);
+  color: var(--ink-soft);
+  font-size: 13px;
+  line-height: 1.5;
+}
+.detail-nav-btn:hover { border-color: var(--seal); color: var(--seal); }
+.detail-nav-btn.is-active {
+  border-color: var(--seal);
+  color: var(--seal);
+  background: rgba(143, 49, 44, 0.08);
+  font-weight: 600;
+}
+#writing-guide,
+#essay,
+#essay-comment { scroll-margin-top: 86px; }
+
 .breadcrumb {
   display: flex;
   flex-wrap: wrap;
@@ -839,9 +922,16 @@ textarea:focus-visible {
   .library { margin-top: 32px; }
   .region-tabs { grid-template-columns: 1fr; gap: 8px; }
   .region-tab { padding: 11px 14px; }
+  .region-overview { grid-template-columns: 1fr; gap: 8px; }
+  .region-overview-card { padding: 12px 14px; }
   .library-head h2 { font-size: 22px; }
   .filters { padding: 12px; gap: 10px; }
   .search-box { flex: 1 1 100%; }
+  .quick-analyze-head h2 { font-size: 21px; }
+
+  .detail-nav { padding: 9px 12px; }
+  .detail-nav-group { gap: 6px; }
+  .detail-nav-btn { padding: 5px 10px; font-size: 12.5px; }
 
   .detail-head h1 { font-size: 22px; }
   .detail-actions { width: 100%; }

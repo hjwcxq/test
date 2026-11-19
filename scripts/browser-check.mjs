@@ -242,22 +242,46 @@ async function runCdp(chrome, base, cdpPort, profile) {
     await send('Runtime.enable');
     await send('Page.navigate', { url: `${base}/apps/p1/` });
 
-    await check('浏览器：/apps/p1/ 首页加载出 3 张真题卡片', async () => {
-      await waitFor("document.querySelectorAll('a.prompt-card').length === 3", '题目卡片');
+    await check('浏览器：/apps/p1/ 首页加载出 9 张真题卡片与三个地区入口', async () => {
+      await waitFor("document.querySelectorAll('a.prompt-card').length === 9", '九道真题卡片');
       const text = await evaluate('document.body.innerText');
       for (const year of ['2022', '2023', '2024']) assert.ok(text.includes(year), `首页应含 ${year}`);
-      assert.ok(text.includes('上海卷高考作文真题'));
+      for (const name of ['上海', '江苏', '浙江']) {
+        assert.ok(
+          await evaluate(
+            `Array.from(document.querySelectorAll('.region-name')).some(el => el.textContent.trim() === ${JSON.stringify(name)})`
+          ),
+          `首页应有独立的「${name}」地区标签`
+        );
+      }
+      assert.ok(text.includes('真题题库'));
+    });
+
+    await check('浏览器：首页关键文案各自只有一个可见文本节点，避免定位歧义', async () => {
+      const counts = await evaluate(`
+        (() => {
+          const wanted = ['真题题库', '上海', '江苏', '浙江', '2022'];
+          const nodes = Array.from(document.querySelectorAll('a, button, span, p, h1, h2, h3, div'));
+          return wanted.map((text) => ({
+            text,
+            count: nodes.filter((el) => el.textContent.trim() === text && el.offsetParent !== null).length,
+          }));
+        })()
+      `);
+      for (const item of counts) {
+        assert.equal(item.count, 1, `首页「${item.text}」应恰好有一个可见文本节点，实际 ${item.count}`);
+      }
     });
 
     await check('浏览器：卡片与页脚均不含年份来源说明，卡片核心内容完整', async () => {
       const cards = await evaluate(`
         Array.from(document.querySelectorAll('a.prompt-card')).map(card => card.innerText)
       `);
-      assert.equal(cards.length, 3, '上海卷应保持 3 张卡片');
+      assert.equal(cards.length, 9, '三套题库共 9 张卡片');
       for (const card of cards) {
         assert.ok(!/内置\s*20\d{2}/.test(card), '卡片不应出现「内置 20XX」来源说明');
         assert.match(card, /\d{4}/, '卡片应保留年份');
-        assert.match(card, /个立意角度/, '卡片应保留立意角度统计');
+        assert.ok(/上海卷|新课标I卷/.test(card), '卡片应保留地区或试卷标签');
         assert.match(card, /查看解题/, '卡片应保留解题入口');
       }
       const footer = await evaluate("document.querySelector('.site-footer').innerText");
@@ -287,8 +311,8 @@ async function runCdp(chrome, base, cdpPort, profile) {
       `);
       assert.equal(state.hash, '', '点击浏览题库不应修改 hash 路由');
       assert.ok(!state.text.includes('页面不存在'), '不应渲染「页面不存在」');
-      assert.ok(state.text.includes('上海卷高考作文真题'), '题库标题应仍然可见');
-      assert.equal(state.cards, 3, '题库卡片应仍然存在');
+      assert.ok(state.text.includes('真题题库'), '题库标题应仍然可见');
+      assert.equal(state.cards, 9, '题库卡片应仍然存在');
     });
 
     await check('浏览器：关键词检索无结果时给出明确空状态提示', async () => {
@@ -306,15 +330,18 @@ async function runCdp(chrome, base, cdpPort, profile) {
       await evaluate(
         "Array.from(document.querySelectorAll('button')).find(b=>b.textContent.includes('清除筛选条件')).click(); true"
       );
-      await waitFor("document.querySelectorAll('a.prompt-card').length === 3", '恢复题目列表');
+      await waitFor("document.querySelectorAll('a.prompt-card').length === 9", '恢复题目列表');
     });
 
-    await check('浏览器：切换江苏高考作文入口，按年份筛选与关键词检索', async () => {
+    await check('浏览器：点击江苏地区入口进入江苏真题，按年份筛选与关键词检索', async () => {
       await evaluate(
-        "Array.from(document.querySelectorAll('.region-tab')).find(b=>b.textContent.includes('江苏高考作文')).click(); true"
+        "Array.from(document.querySelectorAll('.region-overview-card')).find(a=>a.querySelector('.region-name').textContent.trim()==='江苏').click(); true"
       );
-      await waitFor("document.body.innerText.includes('江苏高考作文真题')", '江苏题库标题');
-      await waitFor("document.querySelectorAll('a.prompt-card').length === 3", '江苏三题');
+      await waitFor("document.body.innerText.includes('江苏真题') || document.body.innerText.includes('审题立意与写作提示')", '江苏入口跳转');
+      assert.ok((await evaluate('document.body.innerText')).includes('江苏'));
+
+      await evaluate("location.hash='#/'; true");
+      await waitFor("document.querySelectorAll('a.prompt-card').length === 9", '返回九题首页');
 
       let text = await evaluate('document.body.innerText');
       for (const needle of ['本手、妙手、俗手', '故事的力量', '答案与问题', '新课标I卷']) {
@@ -324,9 +351,11 @@ async function runCdp(chrome, base, cdpPort, profile) {
       await evaluate(
         "Array.from(document.querySelectorAll('.year-filters button')).find(b=>b.textContent.trim()==='2022').click(); true"
       );
-      await waitFor("document.querySelectorAll('a.prompt-card').length === 1", '江苏 2022 筛选');
-      text = await evaluate("document.querySelector('a.prompt-card').innerText");
-      assert.ok(text.includes('本手') && !text.includes('故事的力量'), '2022 筛选应只显示本手题');
+      await waitFor("document.querySelectorAll('a.prompt-card').length === 3", '2022 筛选出三地区各一题');
+      text = await evaluate(
+        "Array.from(document.querySelectorAll('a.prompt-card')).map(a=>a.innerText).join('\\n')"
+      );
+      assert.ok(text.includes('本手') && !text.includes('故事的力量'), '2022 筛选应只显示 2022 年题');
 
       const setSearch = async (value) => {
         await evaluate(`
@@ -341,8 +370,11 @@ async function runCdp(chrome, base, cdpPort, profile) {
       };
 
       await setSearch('本手');
-      await waitFor("document.querySelectorAll('a.prompt-card').length === 1", '搜索本手');
-      assert.ok((await evaluate("document.querySelector('a.prompt-card').innerText")).includes('2022'));
+      await waitFor("document.querySelectorAll('a.prompt-card').length === 2", '搜索本手');
+      text = await evaluate(
+        "Array.from(document.querySelectorAll('a.prompt-card')).map(a=>a.innerText).join('\\n')"
+      );
+      assert.ok(text.includes('本手、妙手、俗手') && text.includes('2022'), '搜索「本手」应命中 2022 年江苏题');
 
       await setSearch('故事');
       await waitFor(
@@ -352,18 +384,22 @@ async function runCdp(chrome, base, cdpPort, profile) {
       await evaluate(
         "Array.from(document.querySelectorAll('.year-filters button')).find(b=>b.textContent.trim()==='全部年份').click(); true"
       );
-      await waitFor("document.querySelectorAll('a.prompt-card').length === 1", '搜索故事');
-      text = await evaluate("document.querySelector('a.prompt-card').innerText");
+      await waitFor("document.querySelectorAll('a.prompt-card').length === 2", '搜索故事');
+      text = await evaluate(
+        "Array.from(document.querySelectorAll('a.prompt-card')).map(a=>a.innerText).join('\\n')"
+      );
       assert.ok(text.includes('故事的力量') && text.includes('2023'), '搜索「故事」应命中 2023 年题');
 
       await setSearch('人工智能');
-      await waitFor("document.querySelectorAll('a.prompt-card').length === 1", '搜索人工智能');
-      text = await evaluate("document.querySelector('a.prompt-card').innerText");
+      await waitFor("document.querySelectorAll('a.prompt-card').length === 2", '搜索人工智能');
+      text = await evaluate(
+        "Array.from(document.querySelectorAll('a.prompt-card')).map(a=>a.innerText).join('\\n')"
+      );
       assert.ok(text.includes('答案与问题') && text.includes('2024'), '搜索「人工智能」应命中 2024 年题');
     });
 
     await check('浏览器：江苏真题详情完整展示材料、要求、审题立意、写作提示与来源', async () => {
-      await evaluate("document.querySelector('a.prompt-card').click(); true");
+      await evaluate("location.hash='#/prompts/jiangsu-2024'; true");
       await waitFor("document.body.innerText.includes('审题立意与写作提示')", '江苏详情页');
       const text = await evaluate('document.body.innerText');
       for (const needle of [
@@ -398,28 +434,30 @@ async function runCdp(chrome, base, cdpPort, profile) {
       );
     });
 
-    await check('浏览器：切换浙江高考作文入口，3 张卡片按年份从近到远排列', async () => {
+    await check('浏览器：点击浙江地区入口，进入该地区最新真题', async () => {
       await evaluate("location.hash='#/'; true");
-      await waitFor("document.body.innerText.includes('上海卷高考作文真题')", '返回首页');
-      await evaluate(
-        "Array.from(document.querySelectorAll('.region-tab')).find(b=>b.textContent.includes('浙江高考作文')).click(); true"
-      );
-      await waitFor("document.body.innerText.includes('浙江高考作文真题')", '浙江题库标题');
-      await waitFor("document.querySelectorAll('a.prompt-card').length === 3", '浙江三题');
+      await waitFor("document.body.innerText.includes('真题题库')", '返回首页');
 
-      const cards = await evaluate(
-        "Array.from(document.querySelectorAll('a.prompt-card')).map(a => a.innerText)"
-      );
-      assert.ok(cards[0].includes('2024') && cards[1].includes('2023') && cards[2].includes('2022'), '浙江卡片应按年份从近到远排列');
       const text = await evaluate('document.body.innerText');
       for (const needle of ['创新时代的青年担当', '故事的力量', '答案与问题', '浙江卷', '新课标I卷']) {
         assert.ok(text.includes(needle), `浙江题库应含「${needle}」`);
       }
-      assert.ok(text.includes('3 题'), '浙江题库应标注 3 题');
+      // 地区内卡片按年份从近到远排列
+      const cards = await evaluate(
+        "Array.from(document.querySelectorAll('#region-zhejiang a.prompt-card')).map(a => a.innerText)"
+      );
+      assert.equal(cards.length, 3, '浙江应有 3 张卡片');
+      assert.ok(cards[0].includes('2024') && cards[1].includes('2023') && cards[2].includes('2022'), '浙江卡片应按年份从近到远排列');
+
+      await evaluate(
+        "Array.from(document.querySelectorAll('.region-overview-card')).find(a=>a.querySelector('.region-name').textContent.trim()==='浙江').click(); true"
+      );
+      await waitFor("document.body.innerText.includes('审题立意与写作指导')", '浙江真题详情');
+      assert.ok((await evaluate('document.body.innerText')).includes('答案与问题'));
     });
 
     await check('浏览器：浙江真题详情完整展示材料、要求与全部写作指导字段', async () => {
-      await evaluate("document.querySelector('a.prompt-card').click(); true");
+      await evaluate("location.hash='#/prompts/zhejiang-2024'; true");
       await waitFor("document.body.innerText.includes('审题立意与写作指导')", '浙江详情页');
       const text = await evaluate('document.body.innerText');
       for (const needle of [
@@ -459,14 +497,14 @@ async function runCdp(chrome, base, cdpPort, profile) {
       let text = await evaluate('document.body.innerText');
       assert.ok(text.includes('解题内容加载失败') && text.includes('返回题目库'));
 
-      await evaluate("location.hash='#/?region=jiangsu&year=2021'; true");
+      await evaluate("location.hash='#/?year=2021'; true");
       await waitFor("document.body.innerText.includes('年份参数无效')", '非法年份提示');
       text = await evaluate('document.body.innerText');
-      assert.ok(text.includes('全部年份') && text.includes('江苏高考作文真题'), '非法年份后应回退到全部年份');
-      assert.equal(await evaluate("document.querySelectorAll('a.prompt-card').length"), 3);
+      assert.ok(text.includes('全部年份') && text.includes('真题题库'), '非法年份后应回退到全部年份');
+      await waitFor("document.querySelectorAll('a.prompt-card').length === 9", '非法年份不隐藏题目');
 
       await evaluate("location.hash='#/'; location.reload(); true");
-      await waitFor("document.body.innerText.includes('上海卷高考作文真题')", '返回上海题库');
+      await waitFor("document.body.innerText.includes('真题题库')", '返回真题题库');
     });
 
     await check('浏览器：进入 2024 真题详情，查看立意与提纲', async () => {
@@ -507,11 +545,11 @@ async function runCdp(chrome, base, cdpPort, profile) {
 
     await check('浏览器：返回首页并进入自定义剖析页，字数统计与示例可见', async () => {
       await evaluate("location.hash='#/'; true");
-      await waitFor("document.body.innerText.includes('上海卷高考作文真题')", '返回首页');
+      await waitFor("document.body.innerText.includes('真题题库')", '返回首页');
       await evaluate("location.hash='#/analyze'; true");
       await waitFor("!!document.querySelector('#topic-input')", '剖析页');
       const text = await evaluate('document.body.innerText');
-      for (const needle of ['示例一键填充', '开始剖析', '2000 字', '清空']) {
+      for (const needle of ['示例一键填充', '开始分析', '2000 字', '清空']) {
         assert.ok(text.includes(needle), `剖析页应含「${needle}」`);
       }
     });
@@ -534,7 +572,7 @@ async function runCdp(chrome, base, cdpPort, profile) {
         })()
       `);
       await evaluate(
-        "Array.from(document.querySelectorAll('button')).find(b=>b.textContent.includes('开始剖析')).click(); true"
+        "Array.from(document.querySelectorAll('button')).find(b=>b.textContent.includes('开始分析')).click(); true"
       );
       await waitFor("!!document.querySelector('.field-error')", '超长校验');
       const message = await evaluate("document.querySelector('.field-error').innerText");
@@ -552,7 +590,7 @@ async function runCdp(chrome, base, cdpPort, profile) {
         })()
       `);
       await evaluate(
-        "Array.from(document.querySelectorAll('button')).find(b=>b.textContent.includes('开始剖析')).click(); true"
+        "Array.from(document.querySelectorAll('button')).find(b=>b.textContent.includes('开始分析')).click(); true"
       );
       await waitFor("!!document.querySelector('.field-error')", '校验提示');
       const message = await evaluate("document.querySelector('.field-error').innerText");
@@ -571,7 +609,7 @@ async function runCdp(chrome, base, cdpPort, profile) {
       `);
       assert.ok((await evaluate("document.querySelector('#topic-input').value.length")) > 10);
       await evaluate(
-        "Array.from(document.querySelectorAll('button')).find(b=>b.textContent.trim()==='开始剖析').click(); true"
+        "Array.from(document.querySelectorAll('button')).find(b=>b.textContent.trim()==='开始分析').click(); true"
       );
       await waitFor("location.hash.includes('/result')", '跳转到结果页');
       await waitFor("document.body.innerText.includes('分段提纲')", '结果页内容');
@@ -634,7 +672,7 @@ async function runCdp(chrome, base, cdpPort, profile) {
         })()
       `);
       await evaluate(
-        "Array.from(document.querySelectorAll('button')).find(b=>b.textContent.includes('开始剖析')).click(); true"
+        "Array.from(document.querySelectorAll('button')).find(b=>b.textContent.includes('开始分析')).click(); true"
       );
       await waitFor("document.body.innerText.includes('重试剖析')", '错误态与重试按钮');
       const text = await evaluate('document.body.innerText');
@@ -727,11 +765,11 @@ async function runCdp(chrome, base, cdpPort, profile) {
       assert.ok((await evaluate("document.querySelectorAll('.essay-section .essay-body p').length")) >= 4);
     });
 
-    await check('浏览器：键盘 Enter 可切换江苏题库入口', async () => {
+    await check('浏览器：键盘 Enter 可激活江苏地区入口', async () => {
       await evaluate("location.hash='#/'; true");
-      await waitFor("document.body.innerText.includes('上海卷高考作文真题')", '返回首页');
+      await waitFor("document.body.innerText.includes('真题题库')", '返回首页');
       await evaluate(
-        "(() => { const b = Array.from(document.querySelectorAll('.region-tab')).find(x=>x.textContent.includes('江苏高考作文')); b.focus(); return document.activeElement === b; })()"
+        "(() => { const a = Array.from(document.querySelectorAll('.region-overview-card')).find(x=>x.querySelector('.region-name').textContent.trim()==='江苏'); a.focus(); return document.activeElement === a; })()"
       );
       await send('Input.dispatchKeyEvent', {
         type: 'rawKeyDown',
@@ -758,8 +796,111 @@ async function runCdp(chrome, base, cdpPort, profile) {
         windowsVirtualKeyCode: 13,
         nativeVirtualKeyCode: 13,
       });
-      await waitFor("document.body.innerText.includes('江苏高考作文真题')", '键盘切换江苏题库');
-      assert.equal(await evaluate("document.querySelectorAll('a.prompt-card').length"), 3);
+      await waitFor("document.body.innerText.includes('审题立意与写作提示')", '键盘激活江苏入口');
+      assert.ok((await evaluate('document.body.innerText')).includes('江苏'));
+    });
+
+    await check('浏览器：江苏详情可直接切换到浙江详情并看到范文点评入口', async () => {
+      await evaluate("location.hash='#/prompts/jiangsu-2024'; true");
+      await waitFor("document.body.innerText.includes('审题立意与写作提示')", '江苏详情页');
+      await evaluate(
+        "Array.from(document.querySelectorAll('.detail-nav-btn')).find(b=>b.textContent.trim()==='浙江').click(); true"
+      );
+      await waitFor("document.body.innerText.includes('审题立意与写作指导')", '浙江详情页');
+      const counts = await evaluate(`
+        (() => {
+          const nodes = Array.from(document.querySelectorAll('a, button, span, p, h1, h2, h3, div'));
+          return ['范文', '点评'].map((text) => ({
+            text,
+            count: nodes.filter((el) => el.textContent.trim() === text && el.offsetParent !== null).length,
+          }));
+        })()
+      `);
+      for (const item of counts) {
+        assert.equal(item.count, 1, `浙江详情「${item.text}」应可见且唯一`);
+      }
+      assert.ok((await evaluate('document.body.innerText')).includes('精彩范文'));
+    });
+
+    await check('浏览器：首页空题目提交提示「题目不能为空」且不发请求', async () => {
+      await evaluate("location.hash='#/'; true");
+      await waitFor("!!document.querySelector('#home-topic-input')", '首页自定义题目输入框');
+      await evaluate("document.querySelector('#home-topic-input').value = ''; true");
+      await evaluate(
+        "Array.from(document.querySelectorAll('button')).find(b=>b.textContent.trim()==='开始分析').click(); true"
+      );
+      await waitFor("!!document.querySelector('.field-error')", '首页空题目校验');
+      const message = await evaluate("document.querySelector('.field-error').innerText");
+      assert.ok(message.includes('题目不能为空'), '应提示题目不能为空');
+    });
+
+    await check('浏览器：首页输入合成题目「关于坚持与变通」可生成剖析结果', async () => {
+      await evaluate(`
+        (() => {
+          const ta = document.querySelector('#home-topic-input');
+          const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set;
+          setter.call(ta, '关于坚持与变通');
+          ta.dispatchEvent(new Event('input', { bubbles: true }));
+          return true;
+        })()
+      `);
+      await evaluate(
+        "Array.from(document.querySelectorAll('button')).find(b=>b.textContent.trim()==='开始分析').click(); true"
+      );
+      await waitFor("location.hash.includes('/result')", '首页剖析结果页');
+      await waitFor("document.body.innerText.includes('分段提纲')", '首页剖析结果内容');
+      const text = await evaluate('document.body.innerText');
+      for (const needle of ['关于坚持与变通', '核心概念', '立意方向', '分段提纲']) {
+        assert.ok(text.includes(needle), `首页剖析结果应含「${needle}」`);
+      }
+    });
+
+    await check('浏览器：点击「上海」地区标签进入详情，首屏可见写作指导 / 范文 / 点评入口', async () => {
+      await evaluate("location.hash='#/'; true");
+      await waitFor("document.querySelectorAll('.region-name').length === 3", '三地区入口');
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      await evaluate(
+        "Array.from(document.querySelectorAll('.region-name')).find(el=>el.textContent.trim()==='上海').closest('a').click(); true"
+      );
+      await waitFor("document.body.innerText.includes('立意角度分层')", '上海真题详情');
+      const visible = await evaluate(`
+        (() => {
+          const wanted = ['上海', '江苏', '浙江', '写作指导', '范文', '点评'];
+          const nodes = Array.from(document.querySelectorAll('a, button, span, p, h1, h2, h3, div'));
+          return wanted.map((text) => ({
+            text,
+            count: nodes.filter((el) => el.textContent.trim() === text && el.offsetParent !== null).length,
+          }));
+        })()
+      `);
+      for (const item of visible) {
+        assert.equal(item.count, 1, `详情页「${item.text}」应恰好有一个可见文本节点，实际 ${item.count}`);
+      }
+    });
+
+    await check('浏览器：题库加载失败展示错误提示与重试入口，重试后恢复九题', async () => {
+      await evaluate("location.hash='#/analyze'; true");
+      await waitFor("!!document.querySelector('#topic-input')", '剖析页');
+      await evaluate(`
+        (() => {
+          window.__origFetch = window.fetch;
+          window.fetch = (...args) => Promise.reject(new TypeError('Failed to fetch'));
+          location.hash = '#/';
+          return true;
+        })()
+      `);
+      await waitFor("document.body.innerText.includes('真题题库加载失败')", '题库加载失败提示');
+      let text = await evaluate('document.body.innerText');
+      assert.ok(text.includes('重新加载'), '应提供重试入口');
+      assert.equal(await evaluate("document.querySelectorAll('a.prompt-card').length"), 0);
+
+      await evaluate('window.fetch = window.__origFetch; true');
+      await evaluate(
+        "Array.from(document.querySelectorAll('button')).find(b=>b.textContent.trim()==='重新加载').click(); true"
+      );
+      await waitFor("document.querySelectorAll('a.prompt-card').length === 9", '重试后恢复九题');
+      text = await evaluate('document.body.innerText');
+      assert.ok(text.includes('真题题库') && text.includes('上海') && text.includes('江苏') && text.includes('浙江'));
     });
   } finally {
     if (ws) ws.close();
@@ -788,7 +929,7 @@ async function main() {
       try {
         await check('浏览器：根路径 / 首页渲染真题题库', async () => {
           const dom = dumpDom(chrome, `${base}/`);
-          for (const needle of ['上海卷高考作文真题', '江苏高考作文', '2022', '2023', '2024', '开始自定义剖析']) {
+          for (const needle of ['真题题库', '上海', '江苏', '浙江', '2022', '2023', '2024', '开始自定义剖析']) {
             assert.ok(dom.includes(needle), `首页 DOM 应含「${needle}」`);
           }
         });
@@ -800,10 +941,10 @@ async function main() {
         });
         await check('浏览器：/apps/p1/ 前缀下 hash 路由均可渲染且不白屏', async () => {
           const routes = [
-            [`${base}/apps/p1/`, ['上海卷高考作文真题', '认可度', '发问与结论', '江苏高考作文']],
+            [`${base}/apps/p1/`, ['真题题库', '认可度', '发问与结论', '江苏', '浙江']],
             [`${base}/apps/p1/#/prompts/shanghai-2024`, ['认可度 · 解题思路全解', '立意角度分层', '结构框架', '常见偏题误区与升格建议']],
             [`${base}/apps/p1/#/prompts/jiangsu-2022`, ['本手、妙手、俗手 · 审题立意与写作提示', '题目材料', '写作要求', '审题立意', '写作提示', '来源']],
-            [`${base}/apps/p1/#/analyze`, ['作文题目', '示例一键填充', '开始剖析']],
+            [`${base}/apps/p1/#/analyze`, ['作文题目', '示例一键填充', '开始分析']],
             [`${base}/apps/p1/#/result`, ['还没有剖析结果', '去剖析题目']],
           ];
           for (const [url, needles] of routes) {

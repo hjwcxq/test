@@ -56,3 +56,42 @@ test('三套题库详情页均含可识别的「写作指导」与范文点评�
   assert.ok(components.includes('精彩范文'), '范文板块应有独立标题');
   assert.ok(components.includes('范文点评'), '点评板块应有独立标题');
 });
+
+test('首页真题题库同时展示上海、江苏、浙江三个地区入口与九道真题', () => {
+  const home = read('web/src/pages/Home.jsx');
+  for (const name of ['上海', '江苏', '浙江']) {
+    assert.ok(home.includes(`name: '${name}'`), `首页应有「${name}」独立地区标签`);
+  }
+  assert.ok(home.includes('真题题库'), '首页应有「真题题库」标题');
+  assert.ok(home.includes('region-overview'), '首页应有地区总览入口');
+  assert.ok(home.includes('region-group'), '首页应按地区分组渲染题目卡片');
+  assert.equal(
+    (home.match(/<PromptCard/g) || []).length,
+    1,
+    '九道题应通过同一个卡片组件渲染，避免某地区卡片漏渲染'
+  );
+  assert.ok(home.includes('重新加载') && home.includes('EmptyState') && home.includes('ErrorState'));
+});
+
+test('详情页提供写作指导 / 范文 / 点评锚点与三地区切换入口', () => {
+  const detail = read('web/src/pages/Detail.jsx');
+  for (const label of ['写作指导', '范文', '点评']) {
+    assert.ok(detail.includes(label), `详情导航应含「${label}」`);
+  }
+  for (const name of ["name: '上海'", "name: '江苏'", "name: '浙江'"]) {
+    assert.ok(detail.includes(name), `详情页应可切换到${name}`);
+  }
+  assert.ok(detail.includes('id="writing-guide"'), '写作指导应有可滚动定位的锚点');
+  const components = read('web/src/components.jsx');
+  assert.ok(components.includes('id="essay"'), '范文板块应有锚点');
+  assert.ok(components.includes('id="essay-comment"'), '点评板块应有锚点');
+});
+
+test('自定义题目输入框为空时使用「开始分析」并给出非空校验', () => {
+  const home = read('web/src/pages/Home.jsx');
+  const analyze = read('web/src/pages/Analyze.jsx');
+  for (const source of [home, analyze]) {
+    assert.ok(source.includes('开始分析'), '提交按钮应使用「开始分析」文案');
+    assert.ok(source.includes('不能为空'), '应有题目不能为空的校验提示');
+  }
+});

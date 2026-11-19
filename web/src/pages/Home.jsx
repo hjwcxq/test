@@ -1,52 +1,44 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
-import { getJiangsuPrompts, getPrompts, getZhejiangPrompts } from '../api.js';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+import {
+  analyzeTopic,
+  getJiangsuPrompts,
+  getPrompts,
+  getZhejiangPrompts,
+} from '../api.js';
 import { Badge, Card, EmptyState, ErrorState, LoadingState } from '../components.jsx';
+import { MAX_TOPIC_LENGTH } from '../constants.js';
+import { saveResult } from '../storage.js';
 
 const YEAR_OPTIONS = [null, 2022, 2023, 2024];
 
-const REGIONS = {
-  shanghai: {
+/**
+ * 三套内置题库。name 是列表与地区入口使用的短标签（上海 / 江苏 / 浙江），
+ * 单独成元素以便地区总览一眼可见；卡片徽标保留完整的“上海卷 / 江苏 · 新课标I卷”信息。
+ */
+const REGIONS = [
+  {
     key: 'shanghai',
-    tab: '上海卷',
-    tabHint: '2022—2024 真题',
-    eyebrow: '题库 · 上海卷',
-    title: '上海卷高考作文真题',
-    description: '点击卡片查看完整解题内容；支持按年份与关键词检索。',
-    searchPlaceholder: '检索题目原文、关键词或立意…',
+    name: '上海',
+    badge: '上海卷',
+    description: '上海卷近三年真题，逐题给出审题要点、立意分层与结构框架。',
   },
-  jiangsu: {
+  {
     key: 'jiangsu',
-    tab: '江苏高考作文',
-    tabHint: '新课标I卷 · 2022—2024',
-    eyebrow: '题库 · 江苏高考作文',
-    title: '江苏高考作文真题',
-    description:
-      '江苏语文高考采用新课标I卷，收录 2022—2024 年真题材料、写作要求、审题立意与写作提示；支持按年份与关键词检索。',
-    searchPlaceholder: '检索材料、审题立意或写作提示…',
+    name: '江苏',
+    badge: '江苏 · 新课标I卷',
+    description: '江苏新课标I卷近三年真题，附材料、写作要求、审题立意与写作提示。',
   },
-  zhejiang: {
+  {
     key: 'zhejiang',
-    tab: '浙江高考作文',
-    tabHint: '浙江卷 / 新课标I卷 · 2022—2024',
-    eyebrow: '题库 · 浙江高考作文',
-    title: '浙江高考作文真题',
-    description:
-      '浙江 2022 年使用浙江卷，2023—2024 年使用新课标I卷；收录近三年真题材料、写作要求、审题立意、关键词拆解、结构提纲与评分关注点，卡片按年份从近到远排列。',
-    searchPlaceholder: '检索材料、审题立意或关键词…',
+    name: '浙江',
+    badge: '浙江 · 浙江卷 / 新课标I卷',
+    description: '浙江近三年真题，附关键词拆解、立意方向、结构提纲与评分关注点。',
   },
-};
+];
 
 function parseLibraryParams(params) {
-  let region = params.get('region');
   let notice = '';
-
-  if (region && !REGIONS[region]) {
-    notice = '题库参数无效，已为你显示上海卷题目。';
-    region = 'shanghai';
-  }
-  if (!region) region = 'shanghai';
-
   let year = null;
   const rawYear = params.get('year');
   if (rawYear !== null && String(rawYear).trim() !== '') {
@@ -57,8 +49,7 @@ function parseLibraryParams(params) {
       notice = '年份参数无效，已为你显示全部年份；可选 2022、2023 或 2024 年。';
     }
   }
-
-  return { region, year, notice };
+  return { year, notice };
 }
 
 function haystack(prompt) {
@@ -86,19 +77,64 @@ function haystack(prompt) {
     .toLowerCase();
 }
 
+/** 地区入口跳转到该地区最近一年的真题详情，避免入口本身无反馈。 */
+function latestPrompt(list) {
+  return [...list].sort((a, b) => b.year - a.year)[0];
+}
+
+function excerptOf(prompt) {
+  if (prompt.province === '江苏' || prompt.province === '浙江') return prompt.material;
+  return prompt.original;
+}
+
+function footTextOf(prompt) {
+  if (prompt.province === '浙江') {
+    return `${prompt.keywords?.length || 0} 个关键词 · ${prompt.angles?.length || 0} 个立意方向`;
+  }
+  if (prompt.province === '江苏') {
+    return `${prompt.reviewPoints?.length || 0} 条审题要点 · ${prompt.writingTips?.length || 0} 条写作提示`;
+  }
+  return `${prompt.angles?.length || 0} 个立意角度 · ${prompt.structure?.sections?.length || 0} 段结构框架`;
+}
+
+function PromptCard({ prompt, region }) {
+  return (
+    <Link className="prompt-card card" to={`/prompts/${prompt.id}`}>
+      <div className="prompt-card-top">
+        <span className="year-seal">{prompt.year} 年</span>
+        <Badge tone="soft">{region.badge}</Badge>
+      </div>
+      <h3>{prompt.title}</h3>
+      <p className="prompt-excerpt">{excerptOf(prompt)}</p>
+      <div className="tag-row">
+        {(prompt.tags || []).slice(0, 4).map((tag) => (
+          <span className="tag" key={tag}>{tag}</span>
+        ))}
+      </div>
+      <div className="prompt-card-foot">
+        <span>{footTextOf(prompt)}</span>
+        <span className="arrow" aria-hidden="true">查看解题 →</span>
+      </div>
+    </Link>
+  );
+}
+
 export default function Home() {
   const [searchParams] = useSearchParams();
+  const navigate = useNavigate();
   const [initialParams] = useState(() => parseLibraryParams(searchParams));
 
-  const [shanghaiPrompts, setShanghaiPrompts] = useState([]);
-  const [jiangsuPrompts, setJiangsuPrompts] = useState([]);
-  const [zhejiangPrompts, setZhejiangPrompts] = useState([]);
+  const [datasets, setDatasets] = useState({ shanghai: [], jiangsu: [], zhejiang: [] });
   const [status, setStatus] = useState('loading');
   const [error, setError] = useState('');
-  const [region, setRegion] = useState(initialParams.region);
   const [year, setYear] = useState(initialParams.year);
   const [keyword, setKeyword] = useState('');
   const [paramNotice, setParamNotice] = useState(initialParams.notice);
+
+  const [topic, setTopic] = useState('');
+  const [topicError, setTopicError] = useState('');
+  const [analyzeError, setAnalyzeError] = useState('');
+  const [analyzing, setAnalyzing] = useState(false);
 
   const load = useCallback(async () => {
     setStatus('loading');
@@ -109,12 +145,14 @@ export default function Home() {
         getJiangsuPrompts(),
         getZhejiangPrompts(),
       ]);
-      setShanghaiPrompts(Array.isArray(shanghaiData) ? shanghaiData : []);
-      setJiangsuPrompts(Array.isArray(jiangsuData) ? jiangsuData : []);
-      setZhejiangPrompts(Array.isArray(zhejiangData) ? zhejiangData : []);
+      setDatasets({
+        shanghai: Array.isArray(shanghaiData) ? shanghaiData : [],
+        jiangsu: Array.isArray(jiangsuData) ? jiangsuData : [],
+        zhejiang: Array.isArray(zhejiangData) ? zhejiangData : [],
+      });
       setStatus('ready');
     } catch (err) {
-      setError(err?.message || '题目库加载失败，请稍后重试。');
+      setError(err?.message || '真题题库加载失败，请稍后点击重试。');
       setStatus('error');
     }
   }, []);
@@ -123,39 +161,57 @@ export default function Home() {
     load();
   }, [load]);
 
-  const active = REGIONS[region];
-  const prompts =
-    region === 'zhejiang' ? zhejiangPrompts : region === 'jiangsu' ? jiangsuPrompts : shanghaiPrompts;
+  const needle = keyword.trim().toLowerCase();
 
-  const filtered = useMemo(() => {
-    const needle = keyword.trim().toLowerCase();
-    const list = prompts.filter((p) => {
-      if (year && p.year !== year) return false;
-      if (needle && !haystack(p).includes(needle)) return false;
-      return true;
-    });
-    // 浙江题库按年份从近到远排列，其余题库沿用接口的年份升序。
-    return region === 'zhejiang' ? [...list].sort((a, b) => b.year - a.year) : list;
-  }, [prompts, year, keyword, region]);
+  const groups = useMemo(
+    () =>
+      REGIONS.map((region) => {
+        const source = datasets[region.key] || [];
+        const list = source.filter((p) => {
+          if (year && p.year !== year) return false;
+          if (needle && !haystack(p).includes(needle)) return false;
+          return true;
+        });
+        // 浙江题库按年份从近到远排列，其余题库沿用接口的年份升序。
+        const prompts =
+          region.key === 'zhejiang' ? [...list].sort((a, b) => b.year - a.year) : list;
+        return { ...region, total: source.length, prompts };
+      }),
+    [datasets, year, needle]
+  );
 
-  const hasFilter = Boolean(year || keyword.trim());
+  const totalPrompts = groups.reduce((sum, group) => sum + group.total, 0);
+  const visiblePrompts = groups.reduce((sum, group) => sum + group.prompts.length, 0);
+  const hasFilter = Boolean(year || needle);
 
-  const switchRegion = (nextRegion) => {
-    if (nextRegion === region) return;
-    setRegion(nextRegion);
-    setKeyword('');
-    setParamNotice('');
-  };
-
-  /**
-   * 滚动到题库区域。
-   * 这里必须用按钮而不是 href="#library"：应用使用 HashRouter，
-   * 直接改 hash 会被当作路由路径（#library → /library），渲染成「页面不存在」，
-   * 看起来就像题库为空。改为原生滚动，保持当前首页路由不变。
-   */
   const scrollToLibrary = () => {
     const target = document.getElementById('library');
     if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  };
+
+  const submitTopic = async () => {
+    const value = topic.trim();
+    if (!value) {
+      setTopicError('作文题目不能为空，请输入或粘贴题目后再提交。');
+      setAnalyzeError('');
+      return;
+    }
+    if (value.length > MAX_TOPIC_LENGTH) {
+      setTopicError(`题目不能超过 ${MAX_TOPIC_LENGTH} 字，当前 ${value.length} 字，请精简后重试。`);
+      return;
+    }
+
+    setTopicError('');
+    setAnalyzeError('');
+    setAnalyzing(true);
+    try {
+      const result = await analyzeTopic(value);
+      saveResult(result);
+      navigate('/result');
+    } catch (err) {
+      setAnalyzeError(err?.message || '剖析失败，服务暂时不可用，请稍后重试。');
+      setAnalyzing(false);
+    }
   };
 
   return (
@@ -195,39 +251,15 @@ export default function Home() {
       </section>
 
       <section className="library" id="library">
-        <div className="region-tabs" role="group" aria-label="选择题库">
-          {Object.values(REGIONS).map((item) => {
-            const count =
-              item.key === 'jiangsu'
-                ? jiangsuPrompts.length
-                : item.key === 'zhejiang'
-                  ? zhejiangPrompts.length
-                  : shanghaiPrompts.length;
-            return (
-              <button
-                key={item.key}
-                type="button"
-                className={`region-tab ${region === item.key ? 'region-tab-active' : ''}`}
-                onClick={() => switchRegion(item.key)}
-                aria-pressed={region === item.key}
-              >
-                <span className="region-tab-label">{item.tab}</span>
-                <span className="region-tab-hint">
-                  {item.tabHint}
-                  {count ? ` · ${count} 题` : ''}
-                </span>
-              </button>
-            );
-          })}
-        </div>
-
         <div className="library-head">
           <div>
-            <p className="eyebrow">{active.eyebrow}</p>
-            <h2>{active.title}</h2>
-            <p className="muted">{active.description}</p>
+            <p className="eyebrow">内置真题</p>
+            <h2>真题题库</h2>
+            <p className="muted">
+              上海、江苏、浙江近三年高考作文真题共 9 道，逐题附写作指导、范文与点评；点击地区或题目即可查看。
+            </p>
           </div>
-          <Badge tone="seal">共 {prompts.length || 3} 题</Badge>
+          <Badge tone="seal">共 {totalPrompts || 9} 题</Badge>
         </div>
 
         {paramNotice && (
@@ -238,6 +270,25 @@ export default function Home() {
             </button>
           </div>
         )}
+
+        <div className="region-overview" aria-label="地区题库入口">
+          {groups.map((group) => {
+            const latest = latestPrompt(group.prompts.length ? group.prompts : datasets[group.key] || []);
+            return (
+              <Link
+                key={group.key}
+                className="region-overview-card card"
+                to={latest ? `/prompts/${latest.id}` : '/'}
+              >
+                <span className="region-name">{group.name}</span>
+                <span className="region-overview-meta">
+                  {group.total} 题 · 2022—2024
+                </span>
+                <span className="region-overview-cta" aria-hidden="true">查看真题 →</span>
+              </Link>
+            );
+          })}
+        </div>
 
         <div className="filters">
           <div className="year-filters" role="group" aria-label="按年份筛选">
@@ -258,7 +309,7 @@ export default function Home() {
             <input
               type="search"
               value={keyword}
-              placeholder={active.searchPlaceholder}
+              placeholder="检索题目原文、关键词或地区…"
               onChange={(e) => setKeyword(e.target.value)}
             />
             {keyword && (
@@ -269,17 +320,13 @@ export default function Home() {
           </label>
         </div>
 
-        {status === 'loading' && <LoadingState text="正在载入题目库…" />}
+        {status === 'loading' && <LoadingState text="正在载入真题题库…" />}
 
         {status === 'error' && (
-          <ErrorState
-            title="题目库加载失败"
-            message={error}
-            onRetry={load}
-          />
+          <ErrorState title="真题题库加载失败" message={error} onRetry={load} />
         )}
 
-        {status === 'ready' && filtered.length === 0 && (
+        {status === 'ready' && visiblePrompts === 0 && (
           <EmptyState
             title={hasFilter ? '没有找到匹配的题目' : '题库暂时为空'}
             description={
@@ -308,40 +355,59 @@ export default function Home() {
           />
         )}
 
-        {status === 'ready' && filtered.length > 0 && (
-          <div className="card-grid">
-            {filtered.map((p) => {
-              const isJiangsu = region === 'jiangsu';
-              const isZhejiang = region === 'zhejiang';
-              const excerpt = isJiangsu || isZhejiang ? p.material : p.original;
-              const badgeText = isJiangsu || isZhejiang ? `${p.province} · ${p.paper}` : p.region;
-              const footText = isZhejiang
-                ? `${p.keywords?.length || 0} 个关键词 · ${p.angles?.length || 0} 个立意方向`
-                : isJiangsu
-                  ? `${p.reviewPoints?.length || 0} 条审题要点 · ${p.writingTips?.length || 0} 条写作提示`
-                  : `${p.angles?.length || 0} 个立意角度 · ${p.structure?.sections?.length || 0} 段结构框架`;
-              return (
-                <Link className="prompt-card card" to={`/prompts/${p.id}`} key={p.id}>
-                  <div className="prompt-card-top">
-                    <span className="year-seal">{p.year}</span>
-                    <Badge tone="soft">{badgeText}</Badge>
-                  </div>
-                  <h3>{p.title}</h3>
-                  <p className="prompt-excerpt">{excerpt}</p>
-                  <div className="tag-row">
-                    {(p.tags || []).slice(0, 4).map((tag) => (
-                      <span className="tag" key={tag}>{tag}</span>
-                    ))}
-                  </div>
-                  <div className="prompt-card-foot">
-                    <span>{footText}</span>
-                    <span className="arrow" aria-hidden="true">查看解题 →</span>
-                  </div>
-                </Link>
-              );
-            })}
+        {status === 'ready' &&
+          groups.map((group) =>
+            group.prompts.length > 0 ? (
+              <div className="region-group" key={group.key} id={`region-${group.key}`}>
+                <div className="region-group-head">
+                  <h3>{group.name}真题</h3>
+                  <p className="muted">{group.description}</p>
+                  <Badge tone="soft">{group.prompts.length} 题</Badge>
+                </div>
+                <div className="card-grid">
+                  {group.prompts.map((prompt) => (
+                    <PromptCard key={prompt.id} prompt={prompt} region={group} />
+                  ))}
+                </div>
+              </div>
+            ) : null
+          )}
+      </section>
+
+      <section className="quick-analyze" aria-label="自定义题目剖析">
+        <div className="quick-analyze-head">
+          <p className="eyebrow">自定义剖析</p>
+          <h2>新增一道题目，立即生成写作剖析</h2>
+          <p className="muted">粘贴任意作文题，系统会判定题型、抽取概念与限制条件，并给出立意与提纲。</p>
+        </div>
+        <Card className="input-card">
+          <div className="input-card-head">
+            <label htmlFor="home-topic-input">作文题目</label>
+            <span className={`counter ${topic.length > MAX_TOPIC_LENGTH ? 'counter-over' : ''}`} aria-live="polite">
+              {topic.length} / {MAX_TOPIC_LENGTH} 字
+            </span>
           </div>
-        )}
+          <textarea
+            id="home-topic-input"
+            value={topic}
+            onChange={(e) => {
+              setTopic(e.target.value);
+              if (topicError) setTopicError('');
+              if (analyzeError) setAnalyzeError('');
+            }}
+            placeholder={'在此粘贴或输入作文题目，支持多行。\n例如：关于坚持与变通'}
+            rows={5}
+            spellCheck={false}
+          />
+          {topicError && <p className="field-error" role="alert">{topicError}</p>}
+          {analyzeError && <p className="field-error" role="alert">{analyzeError}</p>}
+          <div className="form-actions">
+            <button type="button" className="btn btn-primary" onClick={submitTopic} disabled={analyzing}>
+              {analyzing ? '正在分析…' : '开始分析'}
+            </button>
+            <Link className="btn btn-ghost" to="/analyze">进入完整剖析页 →</Link>
+          </div>
+        </Card>
       </section>
     </div>
   );

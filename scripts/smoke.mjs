@@ -9,10 +9,12 @@ import fs from 'node:fs';
 import net from 'node:net';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { resolveVersion } from '../server/version.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const results = [];
 let serverStderr = '';
+const expectedVersion = resolveVersion(process.env);
 
 function check(label, fn) {
   return Promise.resolve()
@@ -65,12 +67,38 @@ async function main() {
   try {
     await waitForHealth(base, child);
 
-    await check('GET /health 返回 200 且响应体表明健康', async () => {
+    await check('GET /health 返回 200、健康状态与当前版本', async () => {
       const r = await fetch(`${base}/health`);
       assert.equal(r.status, 200);
       const body = await r.json();
       assert.equal(body.status, 'ok');
       assert.equal(body.healthy, true);
+      assert.match(body.version, /^v[0-9A-Za-z]/, '健康检查应返回版本号');
+      assert.equal(body.version, expectedVersion, '健康检查版本应与构建/部署配置一致');
+    });
+
+    await check('页面注入当前版本且刷新后保持一致，不出现占位旧版本', async () => {
+      const versions = [];
+      for (const url of [`${base}/`, `${base}/apps/p1/`, `${base}/`]) {
+        const r = await fetch(url);
+        assert.equal(r.status, 200);
+        const html = await r.text();
+        const matched = html.match(/window\.__APP_VERSION__ = "([^"]*)";/);
+        assert.ok(matched, `${url} 应注入 window.__APP_VERSION__`);
+        assert.ok(matched[1], `${url} 版本号不能为空`);
+        assert.ok(!matched[1].includes('__APP_VERSION__'), `${url} 不应残留占位符`);
+        assert.equal(matched[1], expectedVersion, `${url} 版本应与构建/部署记录一致`);
+        versions.push(matched[1]);
+      }
+      assert.equal(new Set(versions).size, 1, '根路径、/apps/p1/ 与刷新后的版本必须一致');
+    });
+
+    await check('构建产物 version.json 存在且版本可追溯', async () => {
+      const file = path.join(root, 'dist/version.json');
+      assert.ok(fs.existsSync(file), 'dist/version.json 应由构建阶段产出');
+      const info = JSON.parse(fs.readFileSync(file, 'utf8'));
+      assert.match(info.version, /^v[0-9A-Za-z]/, 'version.json 应包含有效版本');
+      assert.ok(info.builtAt, 'version.json 应记录构建时间');
     });
 
     await check('GET /apps/p1/health 返回 200', async () => {

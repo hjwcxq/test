@@ -6,11 +6,13 @@ import { REQUIRED_YEARS, loadJiangsuPrompts, loadPrompts, loadZhejiangPrompts } 
 import { analyzeTopic } from './llm.js';
 import { EssayGenerationError } from './essay.js';
 import { MAX_TOPIC_LENGTH } from './analyzer.js';
+import { normalizeVersion, resolveVersion } from './version.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 export const DIST_DIR = path.resolve(here, '../dist');
 const INDEX_PATH = path.join(DIST_DIR, 'index.html');
 const BASE_PLACEHOLDER = '"__APP_BASE_PATH__"';
+const VERSION_PLACEHOLDER = '"__APP_VERSION__"';
 const API_PREFIXES = ['/api', '/apps/p1/api'];
 
 function searchableText(prompt) {
@@ -114,7 +116,17 @@ export function resolveBase(req) {
   return /\/apps\/p1(?:\/|$)/.test(url) ? '/apps/p1' : '';
 }
 
-function serveIndex(req, res, status = 200) {
+/**
+ * 把基础路径与版本号注入前端模板。
+ * 用 JSON.stringify 安全地写进内联脚本，避免引号 / 脚本注入。
+ */
+export function renderIndexHtml(template, { basePath = '', version = '' } = {}) {
+  return String(template)
+    .replace(BASE_PLACEHOLDER, JSON.stringify(basePath))
+    .replace(VERSION_PLACEHOLDER, JSON.stringify(version));
+}
+
+function serveIndex(req, res, version, status = 200) {
   let html;
   try {
     html = fs.readFileSync(INDEX_PATH, 'utf8');
@@ -127,19 +139,20 @@ function serveIndex(req, res, status = 200) {
           '<body><h1>前端资源尚未构建</h1><p>请先执行 npm run build，再启动服务。</p></body></html>'
       );
   }
-  // 用 JSON.stringify 安全地把基础路径写进内联脚本，避免引号注入。
-  const rendered = html.replace(BASE_PLACEHOLDER, JSON.stringify(resolveBase(req)));
+  const rendered = renderIndexHtml(html, { basePath: resolveBase(req), version });
   return res.status(status).type('html').send(rendered);
 }
 
-function health(_req, res) {
-  return res.status(200).json({
-    status: 'ok',
-    healthy: true,
-    service: 'wensi-essay-guide',
-    uptimeSeconds: Math.floor(process.uptime()),
-    timestamp: new Date().toISOString(),
-  });
+function health(version) {
+  return (_req, res) =>
+    res.status(200).json({
+      status: 'ok',
+      healthy: true,
+      service: 'wensi-essay-guide',
+      version,
+      uptimeSeconds: Math.floor(process.uptime()),
+      timestamp: new Date().toISOString(),
+    });
 }
 
 /** API 路由（会被同时挂载到 /api 与 /apps/p1/api）。 */
@@ -259,6 +272,8 @@ export function createApp(options = {}) {
   const prompts = options.prompts || loadPrompts();
   const jiangsuPrompts = options.jiangsuPrompts || loadJiangsuPrompts();
   const zhejiangPrompts = options.zhejiangPrompts || loadZhejiangPrompts();
+  // 版本优先取部署注入的环境变量 / 构建产物；测试可显式传 options.version 覆盖。
+  const version = normalizeVersion(options.version) || resolveVersion();
   const app = express();
   app.disable('x-powered-by');
 
@@ -273,8 +288,8 @@ export function createApp(options = {}) {
       error: { code: 'API_NOT_FOUND', message: '接口不存在，请检查请求路径后重试。' },
     });
 
-  app.get('/health', health);
-  app.get('/apps/p1/health', health);
+  app.get('/health', health(version));
+  app.get('/apps/p1/health', health(version));
 
   for (const prefix of API_PREFIXES) {
     app.use(prefix, api);
@@ -290,7 +305,7 @@ export function createApp(options = {}) {
   });
 
   // 显式首页路由放在静态托管之前，保证 index.html 一定经过基础路径注入。
-  const indexHandler = (req, res) => serveIndex(req, res);
+  const indexHandler = (req, res) => serveIndex(req, res, version);
   app.get(['/', '/apps/p1/', '/index.html', '/apps/p1/index.html'], indexHandler);
 
   const staticOptions = {
@@ -308,7 +323,7 @@ export function createApp(options = {}) {
   // SPA 回退：HTML 请求返回前端 index.html（支持 /apps/p1/ 下刷新子页面），其余返回 JSON 404。
   app.use((req, res) => {
     if (req.method === 'GET' && req.accepts('html') && !req.path.startsWith('/api')) {
-      return serveIndex(req, res);
+      return serveIndex(req, res, version);
     }
     return res.status(404).json({
       error: { code: 'NOT_FOUND', message: '请求的资源不存在，请检查地址后重试。' },

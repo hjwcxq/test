@@ -60,6 +60,7 @@ test('GET /health 与 /apps/p1/health 返回 200 且响应体表明健康', asyn
     assert.equal(payload.status, 'ok');
     assert.equal(payload.healthy, true);
     assert.ok(payload.service);
+    assert.match(payload.version, /^v\d/, '健康检查应返回当前部署版本');
   }
 });
 

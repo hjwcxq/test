@@ -356,6 +356,66 @@ async function runCdp(chrome, base, cdpPort, profile) {
       assert.ok(text.includes('真题题库'));
     });
 
+    await check('浏览器：页头固定展示「当前版本：vX」，刷新一致且桌面/窄屏不遮挡内容', async () => {
+      const readVersion = () =>
+        evaluate(`
+          (() => {
+            const el = document.querySelector('[data-testid="app-version"]');
+            if (!el) return null;
+            const rect = el.getBoundingClientRect();
+            const headerRect = document.querySelector('.site-header').getBoundingClientRect();
+            const mainRect = document.querySelector('.main-content').getBoundingClientRect();
+            const style = getComputedStyle(el);
+            return {
+              text: el.innerText.trim(),
+              visible: rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden',
+              left: rect.left,
+              right: rect.right,
+              bottom: rect.bottom,
+              headerBottom: headerRect.bottom,
+              mainTop: mainRect.top,
+              innerWidth: window.innerWidth,
+            };
+          })()
+        `);
+      const assertLayout = (info, label) => {
+        assert.ok(info && info.visible, `${label}版本号应可见`);
+        assert.match(info.text, /当前版本[:：]\s*v/, `${label}应显示「当前版本：vX」，实际「${info?.text}」`);
+        assert.ok(info.left >= -1 && info.right <= info.innerWidth + 1, `${label}版本号横向溢出：${JSON.stringify(info)}`);
+        assert.ok(info.bottom <= info.headerBottom + 1, `${label}版本号应完整位于页头内`);
+        assert.ok(info.headerBottom <= info.mainTop + 1, `${label}页头不应覆盖主要内容区域`);
+      };
+
+      const first = await readVersion();
+      assertLayout(first, '桌面端');
+      assert.ok(
+        await evaluate("document.querySelector('[data-testid=\"app-version\"]').closest('.site-header') !== null"),
+        '版本号应固定在页头容器内'
+      );
+
+      await evaluate('location.reload(); true');
+      await waitFor("!!document.querySelector('[data-testid=\"app-version\"]')", '刷新后的版本号');
+      const refreshed = await readVersion();
+      assert.equal(refreshed.text, first.text, '刷新页面后版本号应保持一致');
+      assertLayout(refreshed, '刷新后');
+
+      for (const [width, height, mobile] of [[375, 800, true], [1024, 900, false]]) {
+        await send('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile });
+        await new Promise((resolve) => setTimeout(resolve, 400));
+        const info = await readVersion();
+        assertLayout(info, `${width}px `);
+        assert.equal(info.text, first.text, `${width}px 下版本号应与桌面端一致`);
+        const overflow = await evaluate(
+          '({ scrollWidth: document.documentElement.scrollWidth, innerWidth: window.innerWidth })'
+        );
+        assert.ok(
+          overflow.scrollWidth <= overflow.innerWidth + 1,
+          `${width}px 下版本号导致横向溢出：${JSON.stringify(overflow)}`
+        );
+      }
+      await send('Emulation.clearDeviceMetricsOverride').catch(() => {});
+    });
+
     await check('浏览器：首页关键文案各自只有一个可见文本节点，避免定位歧义', async () => {
       const counts = await evaluate(`
         (() => {

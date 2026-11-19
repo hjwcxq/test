@@ -792,6 +792,17 @@ textarea:focus-visible {
 .essay-body p + p { margin-top: 12px; }
 .essay-comment { display: grid; gap: 12px; }
 .essay-comment .mini-card h4 { font-size: 15px; margin-bottom: 6px; }
+.essay-note {
+  display: inline-block;
+  margin-top: 10px;
+  padding: 4px 10px;
+  background: rgba(143, 49, 44, 0.06);
+  border: 1px dashed rgba(143, 49, 44, 0.35);
+  border-radius: 999px;
+  color: var(--seal-dark);
+  font-size: 12.5px;
+  letter-spacing: 0.5px;
+}
 .essay-disclaimer {
   padding: 12px 16px;
   background: rgba(143, 49, 44, 0.05);

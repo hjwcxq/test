@@ -1,5 +1,7 @@
 import test, { after, before } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
 import { createApp } from '../server/app.js';
 import {
   EssayGenerationError,
@@ -47,7 +49,7 @@ test('自定义题目剖析返回原有思路、完整范文与三方面点评',
   assert.ok(payload.outline.length >= 4, '应保留结构思路');
 
   assert.ok(payload.essay?.title && payload.essay?.body);
-  assert.equal(payload.essay.disclaimer, '示范范文，仅供学习参考。');
+  assert.equal(payload.essay.disclaimer, '示范范文，仅供学习参考');
   const chars = countEssayChars(payload.essay.body);
   assert.ok(chars >= 600 && chars <= 1200, `范文应 600–1200 字，实际 ${chars} 字`);
   assert.ok(payload.essay.body.includes('人工智能'), '范文应回应题目关键词');
@@ -111,6 +113,39 @@ test('模型失败时返回可重试错误，不返回空白范文或占位文�
   }
 });
 
+test('上游资源不可用时自动降级为本地范文，接口仍返回完整成篇内容', async () => {
+  const previous = process.env.DELIVERY_RESOURCE_CONTEXT_FILE;
+  process.env.DELIVERY_RESOURCE_CONTEXT_FILE = path.resolve(
+    process.cwd(),
+    'test/fixtures/does-not-exist-resource-context.json'
+  );
+  const degraded = createApp({ prompts: loadPrompts() }).listen(0, '127.0.0.1');
+  await new Promise((resolve) => degraded.once('listening', resolve));
+  const degradedBase = `http://127.0.0.1:${degraded.address().port}`;
+  try {
+    const topic = '人工智能让生活更便利还是更疏远？';
+    const response = await fetch(`${degradedBase}/api/analyze`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ topic }),
+    });
+    assert.equal(response.status, 200, '上游不可用时不应返回空白或 5xx');
+    const payload = await response.json();
+    assert.equal(payload.essayEngine, 'local-fallback');
+    assert.ok(payload.angles.length >= 3 && payload.outline.length >= 4);
+    assert.ok(payload.essay.body.includes('人工智能'));
+    const chars = countEssayChars(payload.essay.body);
+    assert.ok(chars >= 600 && chars <= 1200, `降级范文 ${chars} 字超出范围`);
+    for (const key of ['intention', 'structure', 'highlight']) {
+      assert.ok(payload.review?.[key]?.trim(), `降级点评缺少 ${key}`);
+    }
+  } finally {
+    if (previous === undefined) delete process.env.DELIVERY_RESOURCE_CONTEXT_FILE;
+    else process.env.DELIVERY_RESOURCE_CONTEXT_FILE = previous;
+    await new Promise((resolve) => degraded.close(resolve));
+  }
+});
+
 test('模型返回过短或缺少点评时被拒绝，避免占位内容进入页面', () => {
   assert.throws(
     () => normalizeEssayPayload({ title: '太短', essay: '只有一句话。', review: {} }),
@@ -136,4 +171,25 @@ test('本地范文组件对任意题目都生成 600–1200 字成篇内容', ()
     assert.ok(essay.body.split(/\n\s*\n/).filter(Boolean).length >= 4);
     assert.ok(review.intention && review.structure && review.highlight);
   }
+});
+
+test('范文容器内以精确文案展示「示范范文，仅供学习参考」且不带句号', () => {
+  // 验收以精确文本匹配该提示，末尾多一个句号会导致查不到，这里做源码级守卫。
+  const components = fs.readFileSync(
+    path.resolve(process.cwd(), 'web/src/components.jsx'),
+    'utf8'
+  );
+  assert.ok(
+    components.includes("const disclaimer = '示范范文，仅供学习参考';"),
+    '提示文案应为不带句号的精确文本'
+  );
+  const essayStart = components.indexOf('data-testid="custom-essay"');
+  const noteIndex = components.indexOf('{disclaimer}', essayStart);
+  const bodyIndex = components.indexOf('custom-essay-body', essayStart);
+  assert.ok(essayStart !== -1 && noteIndex !== -1, '范文容器内应渲染提示');
+  assert.ok(noteIndex < bodyIndex, '提示应位于范文正文之前的可见位置');
+  assert.ok(
+    !components.includes("essay.disclaimer ||"),
+    '不应再用后端文案兜底，避免再次出现句号差异'
+  );
 });

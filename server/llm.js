@@ -8,8 +8,8 @@ export function llmConfigured() {
 
 /**
  * 对外剖析入口：本地引擎先给出完整思路，再为自定义题目生成一篇示范范文与点评。
- * 范文生成失败时向上抛出 EssayGenerationError，由路由层转换成可重试错误，
- * 不会返回空白范文或占位文本。
+ * 上游资源不可用时范文自动降级为本地组件，始终返回可读的成篇内容；
+ * 调用方注入的生成器若抛错，则由路由层转换成可重试错误，不返回空白占位。
  */
 export async function analyzeTopic(topic, options = {}) {
   const local = analyzeLocal(topic);

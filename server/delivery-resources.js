@@ -19,7 +19,7 @@ export class DeliveryResources {
     this.grantRequest = null;
   }
 
-  async post(url, token, body = {}) {
+  async post(url, token, body = {}, { timeoutMs = 60000 } = {}) {
     const response = await fetch(url, {
       method: 'POST',
       headers: {
@@ -27,7 +27,7 @@ export class DeliveryResources {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify(body),
-      signal: AbortSignal.timeout(60000),
+      signal: AbortSignal.timeout(timeoutMs),
     });
     if (!response.ok) throw new Error(`资源服务调用失败（HTTP ${response.status}）`);
     return response;
@@ -66,10 +66,10 @@ export class DeliveryResources {
     return { ...resource, token: grant.token };
   }
 
-  async request(alias, operation, payload) {
+  async request(alias, operation, payload, options) {
     const resource = await this.access(alias);
     const path = String(operation).replace(/^\/+/, '');
-    return this.post(`${resource.gateway_url}/${path}`, resource.token, payload);
+    return this.post(`${resource.gateway_url}/${path}`, resource.token, payload, options);
   }
 }
 

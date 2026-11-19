@@ -9,12 +9,14 @@ import fs from 'node:fs';
 import net from 'node:net';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { resolveVersion } from '../server/version.js';
+import { formatVersionLabel, resolveDeliveryTime, resolveVersion } from '../server/version.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const results = [];
 let serverStderr = '';
 const expectedVersion = resolveVersion(process.env);
+const expectedDeliveryTime = resolveDeliveryTime(process.env);
+const expectedLabel = formatVersionLabel(expectedVersion, expectedDeliveryTime);
 
 function check(label, fn) {
   return Promise.resolve()
@@ -67,7 +69,7 @@ async function main() {
   try {
     await waitForHealth(base, child);
 
-    await check('GET /health 返回 200、健康状态与当前版本', async () => {
+    await check('GET /health 返回 200、健康状态、当前版本与交付时间', async () => {
       const r = await fetch(`${base}/health`);
       assert.equal(r.status, 200);
       const body = await r.json();
@@ -75,10 +77,12 @@ async function main() {
       assert.equal(body.healthy, true);
       assert.match(body.version, /^v[0-9A-Za-z]/, '健康检查应返回版本号');
       assert.equal(body.version, expectedVersion, '健康检查版本应与构建/部署配置一致');
+      assert.equal(body.deliveredAt, expectedDeliveryTime, '健康检查交付时间应与构建/部署配置一致');
     });
 
-    await check('页面注入当前版本且刷新后保持一致，不出现占位旧版本', async () => {
+    await check('页面注入当前版本与交付时间，刷新后保持一致，不出现占位旧版本', async () => {
       const versions = [];
+      const times = [];
       for (const url of [`${base}/`, `${base}/apps/p1/`, `${base}/`]) {
         const r = await fetch(url);
         assert.equal(r.status, 200);
@@ -94,10 +98,12 @@ async function main() {
           `${url} 首屏 HTML 应包含 data-testid="app-version"`
         );
         assert.ok(html.includes('当前版本：'), `${url} 首屏 HTML 应包含「当前版本」文案`);
+        assert.ok(html.includes('交付时间：'), `${url} 首屏 HTML 应包含「交付时间」文案`);
         assert.ok(
-          html.includes(`当前版本：${expectedVersion}</span>`),
-          `${url} 首屏版本号文本应与部署版本一致`
+          html.includes(`当前版本：${expectedVersion} · 交付时间：${expectedDeliveryTime}</span>`),
+          `${url} 首屏版本文案应与部署版本及交付时间一致`
         );
+        assert.ok(!/当前版本[:：]\s*v10/.test(html), `${url} 不应再展示 v10 等旧版本`);
         assert.ok(!/当前版本[:：]\s*v7/.test(html), `${url} 不应再展示 v7 等旧版本`);
         const versionNode = html.match(/<span[^>]*data-testid="app-version"[^>]*>([\s\S]*?)<\/span>/);
         assert.ok(versionNode, `${url} 应能定位版本号节点`);
@@ -105,23 +111,31 @@ async function main() {
           !/<[a-zA-Z]/.test(versionNode[1]),
           `${url} 版本号节点内应为纯文本，避免命中测试落到子元素`
         );
-        assert.ok(!html.includes('__APP_VERSION_TEXT__'), `${url} 不应残留版本文本占位符`);
+        assert.ok(!html.includes('__APP_VERSION_LABEL__'), `${url} 不应残留版本文案占位符`);
         assert.equal(
           (html.match(/data-testid="app-version"/g) || []).length,
           1,
           `${url} 版本号节点必须唯一，避免定位歧义`
         );
         versions.push(matched[1]);
+        times.push(versionNode[1].trim());
       }
       assert.equal(new Set(versions).size, 1, '根路径、/apps/p1/ 与刷新后的版本必须一致');
+      assert.equal(new Set(times).size, 1, '根路径、/apps/p1/ 与刷新后的交付时间必须一致');
+      assert.equal(times[0], expectedLabel, `首屏版本文案应为「${expectedLabel}」，实际「${times[0]}」`);
     });
 
-    await check('构建产物 version.json 存在且版本可追溯', async () => {
+    await check('构建产物 version.json 存在且版本与交付时间可追溯', async () => {
       const file = path.join(root, 'dist/version.json');
       assert.ok(fs.existsSync(file), 'dist/version.json 应由构建阶段产出');
       const info = JSON.parse(fs.readFileSync(file, 'utf8'));
       assert.match(info.version, /^v[0-9A-Za-z]/, 'version.json 应包含有效版本');
+      assert.match(info.deliveredAt, /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/, 'version.json 应记录到分钟的交付时间');
       assert.ok(info.builtAt, 'version.json 应记录构建时间');
+      // 部署阶段可能用环境变量覆盖展示版本，因此只在未注入时要求与页面完全一致。
+      if (!process.env.APP_VERSION && !process.env.VITE_APP_VERSION && !process.env.DELIVERY_VERSION) {
+        assert.equal(info.version, expectedVersion, '未注入版本时 version.json 应与页面展示一致');
+      }
     });
 
     await check('GET /apps/p1/health 返回 200', async () => {

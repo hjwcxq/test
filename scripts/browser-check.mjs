@@ -14,11 +14,13 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { resultToText } from '../web/src/exportText.js';
-import { resolveVersion } from '../server/version.js';
+import { formatVersionLabel, resolveDeliveryTime, resolveVersion } from '../server/version.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const results = [];
 const expectedVersion = resolveVersion(process.env);
+const expectedDeliveryTime = resolveDeliveryTime(process.env);
+const expectedLabel = formatVersionLabel(expectedVersion, expectedDeliveryTime);
 
 /** 浏览器工具本身不可用（与应用缺陷无关）时，允许降级到真实 HTTP 校验。 */
 class BrowserInfraError extends Error {}
@@ -407,7 +409,7 @@ async function runCdp(chrome, base, cdpPort, profile) {
       assert.ok(longMetrics.scrollHeight > longMetrics.clientHeight, '长文应可在框内滚动查看而不是撑破布局');
     });
 
-    await check('浏览器：页面顶部固定展示「当前版本：vX」，刷新一致且桌面/窄屏不遮挡内容', async () => {
+    await check('浏览器：页面顶部固定展示「当前版本：vX」与交付时间，刷新一致且桌面/窄屏不遮挡内容', async () => {
       const readVersion = () =>
         evaluate(`
           (() => {
@@ -435,6 +437,11 @@ async function runCdp(chrome, base, cdpPort, profile) {
       const assertLayout = (info, label) => {
         assert.ok(info && info.visible, `${label}版本号应可见`);
         assert.match(info.text, /当前版本[:：]\s*v/, `${label}应显示「当前版本：vX」，实际「${info?.text}」`);
+        assert.match(
+          info.text,
+          /交付时间[:：]\s*\d{4}-\d{2}-\d{2} \d{2}:\d{2}/,
+          `${label}应在交付日期后显示到分钟的时分，实际「${info?.text}」`
+        );
         assert.equal(info.children, 0, `${label}版本号节点内不应嵌套元素，避免命中测试落到子元素`);
         assert.ok(info.hitSelf, `${label}版本号中心点被其他元素遮挡`);
         assert.ok(info.left >= -1 && info.right <= info.innerWidth + 1, `${label}版本号横向溢出：${JSON.stringify(info)}`);
@@ -445,9 +452,11 @@ async function runCdp(chrome, base, cdpPort, profile) {
       assertLayout(first, '桌面端');
       assert.equal(
         first.text,
-        `当前版本：${expectedVersion}`,
-        `当前交付版本应为 ${expectedVersion}，实际「${first?.text}」`
+        expectedLabel,
+        `当前交付版本与交付时间应为「${expectedLabel}」，实际「${first?.text}」`
       );
+      assert.ok(first.text.includes(expectedVersion), `页面应展示当前交付版本 ${expectedVersion}`);
+      assert.ok(first.text.includes(expectedDeliveryTime), `页面应展示交付时间 ${expectedDeliveryTime}`);
       assert.ok(
         await evaluate("document.querySelector('[data-testid=\"app-version\"]').closest('.app-version-bar') !== null"),
         '版本号应固定在页面顶部的版本栏内'
@@ -505,6 +514,11 @@ async function runCdp(chrome, base, cdpPort, profile) {
         `);
         assert.ok(info.visible, '无脚本时版本号也应可见');
         assert.match(info.text, /当前版本[:：]\s*v/, `无脚本时应显示「当前版本：vX」，实际「${info.text}」`);
+        assert.match(
+          info.text,
+          /交付时间[:：]\s*\d{4}-\d{2}-\d{2} \d{2}:\d{2}/,
+          `无脚本时应显示到分钟的交付时间，实际「${info.text}」`
+        );
         assert.ok(info.right <= info.innerWidth + 1, '无脚本时版本号不应横向溢出');
       } finally {
         await send('Emulation.setScriptExecutionDisabled', { value: false });

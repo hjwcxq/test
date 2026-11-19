@@ -62,9 +62,17 @@ assert.equal(typeof essay.generateCustomEssay, 'function');
 assert.equal(typeof essay.composeLocalEssay, 'function');
 assert.equal(typeof version.resolveVersion, 'function');
 assert.equal(typeof version.normalizeVersion, 'function');
+assert.equal(typeof version.resolveDeliveryTime, 'function');
+assert.equal(typeof version.normalizeDeliveryTime, 'function');
 assert.match(version.normalizeVersion('1.2.3'), /^v1\.2\.3$/);
+assert.match(version.normalizeDeliveryTime('2026-11-19T10:13:00'), /^2026-11-19 10:13$/);
 assert.equal(typeof app.renderIndexHtml, 'function');
 assert.ok(app.renderIndexHtml('<script>window.__APP_VERSION__ = "__APP_VERSION__";</script>', { version: 'v9.9.9' }).includes('v9.9.9'));
+assert.ok(
+  app
+    .renderIndexHtml('<span>__APP_VERSION_LABEL__</span>', { version: 'v9.9.9', deliveryTime: '2026-11-19 10:13' })
+    .includes('当前版本：v9.9.9 · 交付时间：2026-11-19 10:13')
+);
 assert.equal(essay.ESSAY_MIN_CHARS, 600);
 assert.equal(essay.ESSAY_MAX_CHARS, 1200);
 assert.equal(data.loadPrompts().length, 3);

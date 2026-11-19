@@ -19,7 +19,9 @@ const read = (file) => fs.readFileSync(path.join(root, file), 'utf8');
 
 const TEMPLATE =
   '<!doctype html><html><head><script>window.__APP_BASE_PATH__ = "__APP_BASE_PATH__";</script>' +
-  '<script>window.__APP_VERSION__ = "__APP_VERSION__";</script></head><body><div id="root"></div></body></html>';
+  '<script>window.__APP_VERSION__ = "__APP_VERSION__";</script></head><body>' +
+  '<span class="app-version" data-testid="app-version">当前版本：<strong data-version-value>__APP_VERSION_TEXT__</strong></span>' +
+  '<div id="root"></div></body></html>';
 
 test('版本号统一规范化为 vX，并过滤脚本注入字符', () => {
   assert.equal(normalizeVersion('1.2.3'), 'v1.2.3');
@@ -53,10 +55,16 @@ test('index.html 注入运行时版本与基础路径，重复渲染（刷新）
   assert.ok(first.includes('window.__APP_BASE_PATH__ = "/apps/p1";'));
   assert.ok(!first.includes('"__APP_VERSION__"'), '版本占位值必须被完全替换');
   assert.ok(!first.includes('"__APP_BASE_PATH__"'), '基础路径占位值必须被完全替换');
+  assert.match(first, /data-testid="app-version">当前版本：<strong data-version-value>v7\.6\.5<\/strong>/);
+  assert.ok(!first.includes('__APP_VERSION_TEXT__'), '首屏版本号文本占位符必须被替换');
 
   const updated = renderIndexHtml(TEMPLATE, { basePath: '', version: 'v7.6.6' });
   assert.ok(updated.includes('"v7.6.6"'), '版本变化后应注入新版本，而不是固定旧值');
   assert.ok(!updated.includes('v7.6.5'));
+
+  const escaped = renderIndexHtml(TEMPLATE, { version: '<img src=x onerror=alert(1)>' });
+  assert.ok(!escaped.includes('data-version-value><img'), '版本号文本必须做 HTML 转义');
+  assert.ok(escaped.includes('data-version-value>&lt;img'), '版本号文本应以 HTML 实体输出');
 });
 
 test('GET /health 返回与部署配置一致的当前版本', async () => {
@@ -82,27 +90,27 @@ test('GET /health 返回与部署配置一致的当前版本', async () => {
   }
 });
 
-test('前端从统一版本模块读取版本，页头版本元素可被验收定位', () => {
-  const app = read('web/src/App.jsx');
-  assert.match(app, /import\s*\{\s*APP_VERSION\s*\}\s*from\s*'\.\/version\.js'/);
-  assert.ok(app.includes('data-testid="app-version"'));
-  assert.ok(app.includes('当前版本：'));
-  assert.ok(app.includes('{APP_VERSION}'));
-  assert.ok(!/当前版本：v\d+\.\d+\.\d+/.test(app), '页面不应硬编码固定版本号');
-
-  const version = read('web/src/version.js');
-  assert.ok(version.includes('window.__APP_VERSION__'));
-  assert.ok(version.includes('__APP_VERSION__'));
-  assert.ok(!/APP_VERSION\s*=\s*['"]v\d+\.\d+\.\d+['"]/.test(version), '版本模块不应硬编码旧版本');
-
+test('版本号随首屏 HTML 服务端输出，无需等待脚本即可被验收定位', () => {
   const html = read('web/index.html');
-  assert.ok(html.includes('window.__APP_VERSION__ = "__APP_VERSION__"'), '模板应保留版本占位符');
+  assert.equal((html.match(/data-testid="app-version"/g) || []).length, 1, '版本号节点必须唯一，避免定位歧义');
+  assert.ok(html.includes('当前版本：'));
+  assert.ok(html.includes('__APP_VERSION_TEXT__'), '模板应保留版本号文本占位符');
+  assert.ok(html.includes('id="app-version"'), '版本号应提供稳定 id');
+
+  const rendered = renderIndexHtml(html, { basePath: '/apps/p1', version: 'v1.2.3' });
+  assert.match(rendered, /data-testid="app-version"[\s\S]*当前版本：<strong[^>]*>v1\.2\.3<\/strong>/);
+  assert.ok(!rendered.includes('__APP_VERSION_TEXT__'));
+  assert.equal((rendered.match(/data-testid="app-version"/g) || []).length, 1);
+
+  const app = read('web/src/App.jsx');
+  assert.ok(!/当前版本：v\d+\.\d+\.\d+/.test(app), '页面不应硬编码固定版本号');
+  assert.ok(!app.includes('data-testid="app-version"'), 'React 不再重复渲染版本节点');
 });
 
 test('构建与部署配置注入版本：vite 产出 version.json，Dockerfile 接受 APP_VERSION', () => {
   const vite = read('web/vite.config.js');
   assert.ok(vite.includes('version.json'));
-  assert.ok(vite.includes('__APP_VERSION__'));
+  assert.ok(vite.includes('__APP_VERSION_TEXT__'), '构建阶段应把版本写入首屏 HTML');
   assert.ok(vite.includes('APP_VERSION'));
 
   const dockerfile = read('Dockerfile');

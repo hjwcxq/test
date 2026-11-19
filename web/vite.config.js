@@ -54,6 +54,20 @@ function emitBuildVersion(buildVersion, commit) {
   };
 }
 
+/**
+ * 开发服务器预览时把构建期版本写进首屏 HTML，避免看到占位符；
+ * 生产构建保留 `__APP_VERSION_TEXT__`，由服务端按部署版本注入（运行时可覆盖）。
+ */
+function injectVersionText(buildVersion) {
+  return {
+    name: 'wensi-inject-version-text',
+    apply: 'serve',
+    transformIndexHtml(html) {
+      return html.replaceAll('__APP_VERSION_TEXT__', buildVersion);
+    },
+  };
+}
+
 export default defineConfig(({ mode }) => {
   // .env 中的版本变量与进程环境变量都参与解析，进程环境变量优先。
   const env = { ...loadEnv(mode, projectRoot, ''), ...process.env };
@@ -64,11 +78,7 @@ export default defineConfig(({ mode }) => {
     root: webRoot,
     // 相对 base：同一份产物在 / 与 /apps/p1/ 下都能加载静态资源。
     base: './',
-    plugins: [react(), emitBuildVersion(buildVersion, commit)],
-    // 静态服务器未注入 window.__APP_VERSION__ 时（如直接预览构建产物）使用构建期版本。
-    define: {
-      __APP_VERSION__: JSON.stringify(buildVersion),
-    },
+    plugins: [react(), emitBuildVersion(buildVersion, commit), injectVersionText(buildVersion)],
     build: {
       outDir: path.resolve(webRoot, '../dist'),
       emptyOutDir: true,

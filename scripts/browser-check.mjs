@@ -356,7 +356,7 @@ async function runCdp(chrome, base, cdpPort, profile) {
       assert.ok(text.includes('真题题库'));
     });
 
-    await check('浏览器：页头固定展示「当前版本：vX」，刷新一致且桌面/窄屏不遮挡内容', async () => {
+    await check('浏览器：页面顶部固定展示「当前版本：vX」，刷新一致且桌面/窄屏不遮挡内容', async () => {
       const readVersion = () =>
         evaluate(`
           (() => {
@@ -389,8 +389,13 @@ async function runCdp(chrome, base, cdpPort, profile) {
       const first = await readVersion();
       assertLayout(first, '桌面端');
       assert.ok(
-        await evaluate("document.querySelector('[data-testid=\"app-version\"]').closest('.site-header') !== null"),
-        '版本号应固定在页头容器内'
+        await evaluate("document.querySelector('[data-testid=\"app-version\"]').closest('.app-version-bar') !== null"),
+        '版本号应固定在页面顶部的版本栏内'
+      );
+      const injectedVersion = await evaluate('window.__APP_VERSION__');
+      assert.ok(
+        injectedVersion && first.text.includes(injectedVersion),
+        `版本号文本应与注入版本一致：文本「${first.text}」，注入「${injectedVersion}」`
       );
 
       await evaluate('location.reload(); true');
@@ -414,6 +419,38 @@ async function runCdp(chrome, base, cdpPort, profile) {
         );
       }
       await send('Emulation.clearDeviceMetricsOverride').catch(() => {});
+    });
+
+    // 验收方可能在脚本执行完成前就检查元素；版本号必须由服务端直接输出到首屏 HTML。
+    await check('浏览器：禁用脚本后版本号仍在首屏可见（不依赖前端渲染）', async () => {
+      await send('Emulation.setScriptExecutionDisabled', { value: true });
+      try {
+        await send('Page.navigate', { url: `${base}/apps/p1/` });
+        await waitFor(
+          "document.readyState === 'complete' && !!document.querySelector('[data-testid=\"app-version\"]')",
+          '无脚本首屏版本号'
+        );
+        const info = await evaluate(`
+          (() => {
+            const el = document.querySelector('[data-testid="app-version"]');
+            const rect = el.getBoundingClientRect();
+            const style = getComputedStyle(el);
+            return {
+              text: el.innerText.trim(),
+              visible: rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden',
+              right: rect.right,
+              innerWidth: window.innerWidth,
+            };
+          })()
+        `);
+        assert.ok(info.visible, '无脚本时版本号也应可见');
+        assert.match(info.text, /当前版本[:：]\s*v/, `无脚本时应显示「当前版本：vX」，实际「${info.text}」`);
+        assert.ok(info.right <= info.innerWidth + 1, '无脚本时版本号不应横向溢出');
+      } finally {
+        await send('Emulation.setScriptExecutionDisabled', { value: false });
+        await send('Page.navigate', { url: `${base}/apps/p1/` });
+        await waitFor("document.querySelectorAll('a.prompt-card').length === 9", '恢复脚本后的首页');
+      }
     });
 
     await check('浏览器：首页关键文案各自只有一个可见文本节点，避免定位歧义', async () => {

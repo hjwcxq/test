@@ -20,7 +20,6 @@ const targets = [
   'server/version.js',
   'web/vite.config.js',
   'web/src/base.js',
-  'web/src/version.js',
   'web/src/api.js',
   'web/src/exportText.js',
   'web/src/constants.js',

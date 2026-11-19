@@ -781,6 +781,13 @@ textarea:focus-visible {
 .essay-eyebrow { color: var(--muted); font-size: 12.5px; letter-spacing: 1px; margin-bottom: 6px; }
 .essay-title { font-size: clamp(20px, 2.4vw, 24px); color: var(--seal-dark); letter-spacing: 1px; overflow-wrap: anywhere; }
 .essay-body { font-family: var(--serif); font-size: 16px; line-height: 2.05; color: var(--ink); }
+.custom-essay-body {
+  max-height: 62vh;
+  overflow-y: auto;
+  padding-right: 8px;
+  scrollbar-width: thin;
+}
+.custom-essay-review-section .section-body { display: grid; gap: 16px; }
 .essay-body p { text-indent: 2em; overflow-wrap: anywhere; }
 .essay-body p + p { margin-top: 12px; }
 .essay-comment { display: grid; gap: 12px; }

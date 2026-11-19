@@ -17,6 +17,7 @@ import {
   validateZhejiangDataset,
 } from '../server/data.js';
 import { createApp } from '../server/app.js';
+import { composeLocalEssay, countEssayChars as countCustomEssayChars } from '../server/essay.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -24,7 +25,9 @@ let server;
 let base;
 
 before(async () => {
-  server = createApp().listen(0, '127.0.0.1');
+  server = createApp({
+    essayGenerator: async (topic, analysis) => composeLocalEssay(topic, analysis),
+  }).listen(0, '127.0.0.1');
   await new Promise((resolve) => server.once('listening', resolve));
   base = `http://127.0.0.1:${server.address().port}`;
 });
@@ -203,32 +206,71 @@ test('单题详情返回对应范文，题目 id 与范文标题一一匹配', a
   }
 });
 
-test('自定义题目剖析不返回范文字段，行为保持原有 AI/本地剖析输出', async () => {
+test('自定义题目剖析返回配套范文与点评，原有剖析字段保持不变', async () => {
+  const topic = '一个人乐意去探索陌生世界，仅仅是因为好奇心吗？';
   const { status, payload } = await jsonRequest('/apps/p1/api/analyze', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ topic: '一个人乐意去探索陌生世界，仅仅是因为好奇心吗？' }),
+    body: JSON.stringify({ topic }),
   });
   assert.equal(status, 200);
-  assert.equal(payload.topic, '一个人乐意去探索陌生世界，仅仅是因为好奇心吗？');
+  assert.equal(payload.topic, topic);
   assert.ok(payload.questionType?.name);
   assert.ok(payload.coreConcepts.length >= 2);
+  assert.ok(payload.angles.length >= 3);
   assert.ok(payload.outline.length >= 4);
-  for (const field of ['essayTitle', 'essayBody', 'essayComment', 'essayDisclaimer']) {
-    assert.equal(payload[field], undefined, `自定义剖析不应出现 ${field}`);
+
+  assert.ok(payload.essay?.title && payload.essay?.body, '自定义剖析应返回范文');
+  assert.ok(countCustomEssayChars(payload.essay.body) >= 600);
+  assert.ok(countCustomEssayChars(payload.essay.body) <= 1200);
+  assert.match(payload.essay.disclaimer, /示范范文，仅供学习参考/);
+  assert.match(payload.essay.body, /好奇心/);
+  for (const field of ['intention', 'structure', 'highlight']) {
+    assert.ok(payload.review?.[field], `自定义点评缺少 ${field}`);
   }
 });
 
-test('详情页以独立板块渲染范文，且自定义剖析页不引入范文组件', () => {
+test('详情页保留独立范文板块，自定义结果使用范文 / 点评组件与稳定测试标识', () => {
   const detail = fs.readFileSync(path.join(root, 'web/src/pages/Detail.jsx'), 'utf8');
-  const essayComponent = fs.readFileSync(path.join(root, 'web/src/components.jsx'), 'utf8');
+  const resultPage = fs.readFileSync(path.join(root, 'web/src/pages/Result.jsx'), 'utf8');
   const analyzePage = fs.readFileSync(path.join(root, 'web/src/pages/Analyze.jsx'), 'utf8');
+  const essayComponent = fs.readFileSync(path.join(root, 'web/src/components.jsx'), 'utf8');
 
   assert.match(essayComponent, /export function EssaySection/);
   assert.match(essayComponent, /精彩范文/);
   assert.match(essayComponent, /essayDisclaimer/);
   assert.equal((detail.match(/<EssaySection/g) || []).length, 3, '上海、江苏、浙江详情页各需一处范文板块');
-  assert.doesNotMatch(analyzePage, /EssaySection/, '自定义剖析页不应出现范文板块');
+
+  assert.match(essayComponent, /export function CustomEssaySection/);
+  assert.match(essayComponent, /data-testid="custom-essay"/);
+  assert.match(essayComponent, /data-testid="custom-essay-review"/);
+  assert.match(essayComponent, /示范范文，仅供学习参考/);
+  assert.match(resultPage, /<CustomEssaySection/);
+  for (const testId of [
+    'custom-topic-input',
+    'analyze-button',
+    'topic-error',
+  ]) {
+    assert.ok(analyzePage.includes(`data-testid="${testId}"`), `剖析页缺少 ${testId}`);
+    assert.ok(resultPage.includes(`data-testid="${testId}"`), `结果页缺少 ${testId}`);
+  }
+});
+
+test('自定义剖析导出文本包含范文、点评与学习参考声明', async () => {
+  const { resultToText } = await import('../web/src/exportText.js');
+  const { payload } = await jsonRequest('/apps/p1/api/analyze', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ topic: '青禾书院的传统手工艺如何传承？' }),
+  });
+  const text = resultToText(payload);
+  assert.match(text, /—— 范文 ——/);
+  assert.ok(text.includes(payload.essay.title));
+  assert.ok(text.includes(payload.essay.body.split(/\n\s*\n/)[0].trim()));
+  assert.match(text, /范文点评·立意/);
+  assert.match(text, /范文点评·结构/);
+  assert.match(text, /范文点评·亮点/);
+  assert.match(text, /示范范文，仅供学习参考/);
 });
 
 test('范文可导出为纯文本，包含标题、正文、四维点评与免责声明', async () => {

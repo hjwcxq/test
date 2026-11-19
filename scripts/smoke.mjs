@@ -259,7 +259,7 @@ async function main() {
       assert.equal((await missing.json()).error.code, 'PROMPT_NOT_FOUND');
     });
 
-    await check('九道内置题均返回完整范文与四维点评，自定义剖析不含范文字段', async () => {
+    await check('九道内置题均返回完整范文与四维点评，自定义剖析返回配套范文', async () => {
       const ids = [
         'shanghai-2022',
         'shanghai-2023',
@@ -291,7 +291,15 @@ async function main() {
       });
       assert.equal(analyzed.status, 200);
       const result = await analyzed.json();
-      assert.equal(result.essayBody, undefined, '自定义剖析不应返回范文');
+      assert.ok(result.angles.length >= 3 && result.outline.length >= 4, '应保留原有立意与结构');
+      assert.ok(result.essay?.body, '自定义剖析应返回范文');
+      const customChars = Array.from(result.essay.body.replace(/\s/g, '')).length;
+      assert.ok(customChars >= 600 && customChars <= 1200, `自定义范文 ${customChars} 字超出范围`);
+      assert.match(result.essay.body, /好奇心|探索/, '范文应回应题目关键词');
+      assert.match(result.essay.disclaimer, /示范范文，仅供学习参考/);
+      for (const field of ['intention', 'structure', 'highlight']) {
+        assert.ok(result.review?.[field], `自定义点评缺少 ${field}`);
+      }
     });
 
     const validTopic = '一个人乐意去探索陌生世界，仅仅是因为好奇心吗？';
@@ -312,6 +320,8 @@ async function main() {
         assert.ok(body.outline.length >= 4);
         assert.ok(body.materials.length >= 2);
         assert.ok(body.writingTips.length >= 3 && body.risks.length >= 3);
+        assert.ok(body.essay?.body, '应返回配套范文');
+        assert.ok(body.review?.intention && body.review?.structure && body.review?.highlight);
         for (const a of body.angles) assert.ok(a.title && a.level && a.fit && a.description);
         for (const s of body.outline) assert.ok(s.section && s.function && s.ratio && s.guidance);
       }

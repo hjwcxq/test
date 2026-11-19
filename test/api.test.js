@@ -2,12 +2,19 @@ import test, { after, before } from 'node:test';
 import assert from 'node:assert/strict';
 import { createApp, normalizeBase } from '../server/app.js';
 import { loadPrompts } from '../server/data.js';
+import { composeLocalEssay } from '../server/essay.js';
 
 let server;
 let base;
 
+// 测试使用确定性的本地范文组件，避免依赖外部模型；真实模型通道由 smoke 覆盖。
+const localEssayGenerator = async (topic, analysis) => composeLocalEssay(topic, analysis);
+
 before(async () => {
-  server = createApp({ prompts: loadPrompts() }).listen(0, '127.0.0.1');
+  server = createApp({
+    prompts: loadPrompts(),
+    essayGenerator: localEssayGenerator,
+  }).listen(0, '127.0.0.1');
   await new Promise((resolve) => server.once('listening', resolve));
   base = `http://127.0.0.1:${server.address().port}`;
 });
@@ -114,6 +121,11 @@ test('POST /api/analyze 合法题目返回 200 且字段完整', async () => {
     assert.ok(payload.writingTips.length >= 3);
     assert.ok(payload.risks.length >= 3);
     assert.ok(payload.engine);
+    assert.ok(payload.essay, '应返回配套范文');
+    assert.ok(payload.essay.title && payload.essay.body);
+    assert.ok(payload.essay.wordCount >= 600 && payload.essay.wordCount <= 1200);
+    assert.match(payload.essay.disclaimer, /示范范文，仅供学习参考/);
+    assert.ok(payload.review?.intention && payload.review?.structure && payload.review?.highlight);
     for (const a of payload.angles) assert.ok(a.title && a.level && a.fit && a.description);
     for (const s of payload.outline) assert.ok(s.section && s.function && s.ratio && s.guidance);
   }
@@ -125,7 +137,8 @@ test('POST /api/analyze 空题目 / 纯空白 / 缺少 topic 返回 400 中文�
     const { status, payload } = await post(body);
     assert.equal(status, 400, `body=${JSON.stringify(body)} 应返回 400`);
     assert.ok(payload.error.code);
-    assert.ok(/[\u4e00-\u9fa5]/.test(payload.error.message));
+    assert.match(payload.error.message, /请输入作文题目/);
+    assert.equal(payload.essay, undefined, '空题目不应生成范文');
   }
 });
 

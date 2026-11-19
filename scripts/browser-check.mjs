@@ -129,6 +129,8 @@ async function httpFallback(base) {
     assert.equal(ok.status, 200);
     const body = await ok.json();
     assert.ok(body.angles.length >= 3 && body.outline.length >= 4);
+    assert.ok(body.essay?.body, '降级验证应返回配套范文');
+    assert.ok(body.review?.intention && body.review?.structure && body.review?.highlight);
     const bad = await fetch(`${base}/apps/p1/api/analyze`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -691,7 +693,7 @@ async function runCdp(chrome, base, cdpPort, profile) {
       );
       await waitFor("!!document.querySelector('.field-error')", '校验提示');
       const message = await evaluate("document.querySelector('.field-error').innerText");
-      assert.match(message, /不能为空/);
+      assert.match(message, /请输入作文题目/);
     });
 
     await check('浏览器：示例填充后提交，剖析结果含题型 / 概念 / ≥3 立意 / 分段提纲', async () => {
@@ -708,16 +710,72 @@ async function runCdp(chrome, base, cdpPort, profile) {
       await evaluate(
         "Array.from(document.querySelectorAll('button')).find(b=>b.textContent.trim()==='开始分析').click(); true"
       );
-      await waitFor("location.hash.includes('/result')", '跳转到结果页');
-      await waitFor("document.body.innerText.includes('分段提纲')", '结果页内容');
+      await waitFor("location.hash.includes('/result')", '跳转到结果页', 120000);
+      await waitFor("document.body.innerText.includes('分段提纲')", '结果页内容', 20000);
       const text = await evaluate('document.body.innerText');
-      for (const needle of ['思辨关系类', '核心概念', '限制条件', '立意方向', '分段提纲', '写作建议', '风险提示']) {
+      for (const needle of ['思辨关系类', '核心概念', '限制条件', '立意角度', '结构思路', '范文', '范文点评', '写作建议', '风险提示']) {
         assert.ok(text.includes(needle), `结果页应含「${needle}」`);
       }
       assert.ok((await evaluate("document.querySelectorAll('.angle-card').length")) >= 3);
       assert.ok((await evaluate("document.querySelectorAll('.outline-row').length")) >= 4);
-      assert.ok(!text.includes('精彩范文'), '自定义剖析结果不应出现范文板块');
-      assert.equal(await evaluate("document.querySelectorAll('.essay-section').length"), 0);
+      assert.ok((await evaluate("document.querySelectorAll('[data-testid=\"custom-essay\"]').length")) >= 1);
+      const customEssay = await evaluate("document.querySelector('[data-testid=\"custom-essay\"]').innerText");
+      assert.ok(customEssay.includes('好奇心'), '自定义范文应回应题目关键词');
+      assert.ok(customEssay.length >= 600, '自定义范文应为完整成篇内容');
+      const customReview = await evaluate("document.querySelector('[data-testid=\"custom-essay-review\"]').innerText");
+      for (const label of ['立意', '结构', '亮点']) {
+        assert.ok(customReview.includes(label), `范文点评应含「${label}」`);
+      }
+    });
+
+    await check('浏览器：结果页换题重新生成时先显示范文加载态，更新后不残留上一题范文', async () => {
+      // 人为延迟接口，确保能观察到「正在生成范文…」加载态。
+      await evaluate(`
+        window.__BC_ORIG_FETCH = window.fetch;
+        window.fetch = (...args) => new Promise((resolve, reject) => {
+          setTimeout(() => window.__BC_ORIG_FETCH(...args).then(resolve, reject), 1200);
+        });
+        true
+      `);
+
+      const fillResultTopic = async (value) => {
+        await evaluate(`
+          (() => {
+            const ta = document.querySelector('[data-testid="custom-topic-input"]');
+            const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set;
+            setter.call(ta, ${JSON.stringify(value)});
+            ta.dispatchEvent(new Event('input', { bubbles: true }));
+            return true;
+          })()
+        `);
+        await evaluate("document.querySelector('[data-testid=\"analyze-button\"]').click(); true");
+      };
+
+      await fillResultTopic('星火码头的去留应如何权衡？');
+      await waitFor("document.body.innerText.includes('正在生成范文…')", '范文加载态', 30000);
+      assert.equal(
+        await evaluate("document.querySelectorAll('[data-testid=\"custom-essay\"]').length"),
+        0,
+        '加载期间不应展示旧范文或空白占位'
+      );
+      await waitFor(
+        "document.body.innerText.includes('星火码头') && !!document.querySelector('[data-testid=\"custom-essay\"]')",
+        '第一题范文出现',
+        120000
+      );
+      assert.ok(!(await evaluate('document.body.innerText')).includes('正在生成范文…'), '范文出现后加载态应消失');
+
+      await fillResultTopic('青禾书院的传统手工艺如何传承？');
+      await waitFor(
+        "document.querySelector('[data-testid=\"custom-essay\"]')?.innerText.includes('青禾书院')",
+        '第二题范文更新',
+        120000
+      );
+      const updatedText = await evaluate('document.body.innerText');
+      assert.ok(updatedText.includes('青禾书院'));
+      assert.ok(!updatedText.includes('星火码头'), '新题目生成后不应残留上一题范文');
+
+      await evaluate('window.fetch = window.__BC_ORIG_FETCH; true');
     });
 
     let clipboardGranted = false;
@@ -919,7 +977,7 @@ async function runCdp(chrome, base, cdpPort, profile) {
       assert.ok((await evaluate('document.body.innerText')).includes('精彩范文'));
     });
 
-    await check('浏览器：首页空题目提交提示「题目不能为空」且不发请求', async () => {
+    await check('浏览器：首页空题目提交提示「请输入作文题目」且不发请求', async () => {
       await evaluate("location.hash='#/'; true");
       await waitFor("!!document.querySelector('#home-topic-input')", '首页自定义题目输入框');
       await evaluate("document.querySelector('#home-topic-input').value = ''; true");
@@ -928,7 +986,7 @@ async function runCdp(chrome, base, cdpPort, profile) {
       );
       await waitFor("!!document.querySelector('.field-error')", '首页空题目校验');
       const message = await evaluate("document.querySelector('.field-error').innerText");
-      assert.ok(message.includes('题目不能为空'), '应提示题目不能为空');
+      assert.ok(message.includes('请输入作文题目'), '应提示请输入作文题目');
     });
 
     await check('浏览器：首页输入合成题目「关于坚持与变通」可生成剖析结果', async () => {
@@ -944,8 +1002,8 @@ async function runCdp(chrome, base, cdpPort, profile) {
       await evaluate(
         "Array.from(document.querySelectorAll('button')).find(b=>b.textContent.trim()==='开始分析').click(); true"
       );
-      await waitFor("location.hash.includes('/result')", '首页剖析结果页');
-      await waitFor("document.body.innerText.includes('分段提纲')", '首页剖析结果内容');
+      await waitFor("location.hash.includes('/result')", '首页剖析结果页', 120000);
+      await waitFor("document.body.innerText.includes('分段提纲')", '首页剖析结果内容', 20000);
       const text = await evaluate('document.body.innerText');
       for (const needle of ['关于坚持与变通', '核心概念', '立意方向', '分段提纲']) {
         assert.ok(text.includes(needle), `首页剖析结果应含「${needle}」`);
@@ -1048,7 +1106,7 @@ async function runCdp(chrome, base, cdpPort, profile) {
       let text = await evaluate('document.body.innerText');
       assert.ok(text.includes('正在载入江苏真题'), '接口未返回时应展示可靠加载态');
       assert.ok(!text.includes('页面不存在'), '不能跳到不存在的页面');
-      assert.ok(!text.includes('真题题库'), '加载态下不应退回首页题库');
+      assert.ok(!text.includes('历年真题'), '加载态下不应退回首页题库');
 
       await continuePausedRequests();
       await waitFor("document.body.innerText.includes('审题立意与写作提示')", '释放请求后的江苏详情', 20000);
@@ -1095,7 +1153,7 @@ async function runCdp(chrome, base, cdpPort, profile) {
       let text = await evaluate('document.body.innerText');
       assert.ok(text.includes('正在载入浙江真题'), '接口未返回时应展示可靠加载态');
       assert.ok(!text.includes('页面不存在'), '不能跳到不存在的页面');
-      assert.ok(!text.includes('真题题库'), '加载态下不应退回首页题库');
+      assert.ok(!text.includes('历年真题'), '加载态下不应退回首页题库');
 
       await continuePausedRequests();
       await waitFor("document.body.innerText.includes('审题立意与写作指导')", '释放请求后的浙江详情', 20000);
@@ -1241,7 +1299,7 @@ async function runCdp(chrome, base, cdpPort, profile) {
       await evaluate(
         "Array.from(document.querySelectorAll('button')).find(b=>b.textContent.trim()==='开始分析').click(); true"
       );
-      await waitFor("document.body.innerText.includes('题目不能为空')", '场景 5 空题目提示');
+      await waitFor("document.body.innerText.includes('请输入作文题目')", '场景 5 空题目提示');
       const calls = await evaluate('window.__analyzeCalls');
       assert.ok(
         !calls.some((url) => url.includes('/api/analyze')),
@@ -1249,6 +1307,114 @@ async function runCdp(chrome, base, cdpPort, profile) {
       );
       await evaluate('window.fetch = window.__origFetchForEmpty; true');
     });
+
+    await check('浏览器验收：自定义剖析范文 / 点评 / 换题 / 空输入 / 加载态 / 题库回归', async () => {
+      const fillCustom = async (value) => {
+        await evaluate(`
+          (() => {
+            const ta = document.querySelector('[data-testid="custom-topic-input"]');
+            const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set;
+            setter.call(ta, ${JSON.stringify(value)});
+            ta.dispatchEvent(new Event('input', { bubbles: true }));
+            return true;
+          })()
+        `);
+      };
+      const submitCustom = async () => {
+        await evaluate("document.querySelector('[data-testid=\"analyze-button\"]').click(); true");
+      };
+      const openAnalyze = async () => {
+        await send('Page.navigate', { url: `${base}/apps/p1/` });
+        await waitFor("!!document.querySelector('.main-nav')", '首页导航');
+        await evaluate(
+          "Array.from(document.querySelectorAll('.main-nav a')).find(a=>a.textContent.trim()==='自定义剖析').click(); true"
+        );
+        await waitFor("!!document.querySelector('[data-testid=\"custom-topic-input\"]')", '自定义剖析页');
+      };
+
+      // 1 / 2：保留立意角度、结构思路，新增范文与三方面点评。
+      await openAnalyze();
+      await fillCustom('人工智能让生活更便利还是更疏远？');
+      await submitCustom();
+      await waitFor("document.body.innerText.includes('正在生成范文…')", '范文加载态', 30000);
+      assert.equal(
+        await evaluate("document.querySelectorAll('[data-testid=\"custom-essay\"]').length"),
+        0,
+        '加载期间不应出现范文容器'
+      );
+      await waitFor("!!document.querySelector('[data-testid=\"custom-essay\"]')", 'AI 题范文出现', 120000);
+      const aiText = await evaluate('document.body.innerText');
+      for (const needle of ['立意角度', '结构思路', '范文', '示范范文，仅供学习参考']) {
+        assert.ok(aiText.includes(needle), `应含「${needle}」`);
+      }
+      const aiEssay = await evaluate("document.querySelector('[data-testid=\"custom-essay\"]').innerText");
+      assert.ok(aiEssay.includes('人工智能'), 'AI 题范文应包含题目关键词');
+      const aiReview = await evaluate("document.querySelector('[data-testid=\"custom-essay-review\"]').innerText");
+      for (const label of ['立意', '结构', '亮点']) {
+        assert.ok(aiReview.includes(label), `点评应含「${label}」`);
+      }
+
+      // 3：换题后内容同步更新，不残留上一题。
+      await fillCustom('星火码头的去留应如何权衡？');
+      await submitCustom();
+      await waitFor(
+        "document.querySelector('[data-testid=\"custom-essay\"]')?.innerText.includes('星火码头')",
+        '星火码头范文',
+        120000
+      );
+      await fillCustom('青禾书院的传统手工艺如何传承？');
+      await submitCustom();
+      await waitFor(
+        "document.querySelector('[data-testid=\"custom-essay\"]')?.innerText.includes('青禾书院')",
+        '青禾书院范文',
+        120000
+      );
+      assert.ok(!(await evaluate('document.body.innerText')).includes('星火码头'), '不应残留上一题范文');
+
+      // 4：纯空白输入提示「请输入作文题目」，不出现范文。
+      await openAnalyze();
+      await fillCustom('   ');
+      await submitCustom();
+      await waitFor("!!document.querySelector('[data-testid=\"topic-error\"]')", '空题目提示');
+      assert.match(
+        await evaluate("document.querySelector('[data-testid=\"topic-error\"]').innerText"),
+        /请输入作文题目/
+      );
+      assert.equal(
+        await evaluate("document.querySelectorAll('[data-testid=\"custom-essay\"]').length"),
+        0,
+        '空题目不应出现范文'
+      );
+
+      // 5：加载态先出现、范文出现后消失。
+      await fillCustom('城市老街区改造应保留记忆还是引入新业态？');
+      await submitCustom();
+      await waitFor("document.body.innerText.includes('正在生成范文…')", '有效题目加载态', 30000);
+      assert.equal(
+        await evaluate("document.querySelectorAll('[data-testid=\"custom-essay\"]').length"),
+        0,
+        '加载期间不应展示空白占位范文'
+      );
+      await waitFor("!!document.querySelector('[data-testid=\"custom-essay\"]')", '老街区范文出现', 120000);
+      assert.ok(
+        !(await evaluate('document.body.innerText')).includes('正在生成范文…'),
+        '范文出现后加载态应消失'
+      );
+
+      // 6：切回真题题库，内置题目、写作指导与范文正常。
+      await evaluate(
+        "Array.from(document.querySelectorAll('.main-nav a')).find(a=>a.textContent.trim()==='真题题库').click(); true"
+      );
+      await waitFor("document.body.innerText.includes('好奇心与探索陌生世界')", '题库内置真题');
+      await evaluate(`
+        Array.from(document.querySelectorAll('a.prompt-card'))
+          .find(a => a.innerText.includes('好奇心与探索陌生世界')).click(); true
+      `);
+      await waitFor("document.body.innerText.includes('写作指导')", '内置题目写作指导');
+      const detailText = await evaluate('document.body.innerText');
+      assert.ok(detailText.includes('范文'), '内置题目应有范文');
+    });
+
   } finally {
     if (ws) ws.close();
     browser.kill('SIGTERM');

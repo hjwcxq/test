@@ -12,6 +12,7 @@ import {
   validateZhejiangDataset,
 } from '../server/data.js';
 import { createApp } from '../server/app.js';
+import { composeLocalEssay } from '../server/essay.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -19,7 +20,9 @@ let server;
 let base;
 
 before(async () => {
-  server = createApp().listen(0, '127.0.0.1');
+  server = createApp({
+    essayGenerator: async (topic, analysis) => composeLocalEssay(topic, analysis),
+  }).listen(0, '127.0.0.1');
   await new Promise((resolve) => server.once('listening', resolve));
   base = `http://127.0.0.1:${server.address().port}`;
 });
@@ -281,6 +284,7 @@ test('自定义题目剖析入口在新增题库后仍可用，异常输入返�
   });
   assert.equal(valid.status, 200);
   assert.ok(valid.payload.angles.length >= 3 && valid.payload.outline.length >= 4);
+  assert.ok(valid.payload.essay?.body && valid.payload.review?.highlight);
 
   const empty = await jsonRequest('/api/analyze', {
     method: 'POST',

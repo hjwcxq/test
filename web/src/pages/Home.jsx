@@ -187,7 +187,7 @@ export default function Home() {
   const submitTopic = async () => {
     const value = topic.trim();
     if (!value) {
-      setTopicError('作文题目不能为空，请输入或粘贴题目后再提交。');
+      setTopicError('请输入作文题目');
       setAnalyzeError('');
       return;
     }
@@ -226,7 +226,7 @@ export default function Home() {
               浏览真题题库
             </button>
           </div>
-          <p className="hero-note">内置真题均配一篇完整精彩范文与四维点评；自定义剖析聚焦解题思路，不生成整篇范文，也不作评分或逐句批改。</p>
+          <p className="hero-note">内置真题均配一篇完整精彩范文与四维点评；自定义剖析给出解题思路，并围绕您粘贴的题目生成一篇示范范文与点评，不评分、不逐句批改。</p>
         </div>
       </section>
 
@@ -237,7 +237,7 @@ export default function Home() {
         </Card>
         <Card className="feature-card">
           <h3>任意题目剖析</h3>
-          <p>识别思辨关系、现象评论、名言警句、成长体验等题型，抽取核心概念与限制条件，输出分层立意。</p>
+          <p>识别思辨关系、现象评论、名言警句、成长体验等题型，抽取核心概念与限制条件，输出分层立意，并附一篇贴合题目的示范范文与点评。</p>
         </Card>
         <Card className="feature-card">
           <h3>可复制的思路</h3>
@@ -249,9 +249,9 @@ export default function Home() {
         <div className="library-head">
           <div>
             <p className="eyebrow">内置真题</p>
-            <h2>真题题库</h2>
+            <h2>历年真题</h2>
             <p className="muted">
-              上海、江苏、浙江近三年高考作文真题共 9 道，逐题附写作指导、范文与点评；点击地区或题目即可查看。
+              真题题库收录上海、江苏、浙江近三年高考作文真题共 9 道，逐题附写作指导、范文与点评；点击地区或题目即可查看。
             </p>
           </div>
           <Badge tone="seal">共 {totalPrompts || 9} 题</Badge>

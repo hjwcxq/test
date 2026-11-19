@@ -24,8 +24,15 @@ const EXAMPLES = [
   },
 ];
 
+const MIN_LOADING_MS = 1200;
+
+function waitAtLeast(startedAt) {
+  const remaining = MIN_LOADING_MS - (Date.now() - startedAt);
+  return remaining > 0 ? new Promise((resolve) => setTimeout(resolve, remaining)) : Promise.resolve();
+}
+
 function validate(text) {
-  if (!text.trim()) return '作文题目不能为空，请输入或粘贴题目后再提交。';
+  if (!text.trim()) return '请输入作文题目';
   if (text.length > MAX_TOPIC_LENGTH) {
     return `题目不能超过 ${MAX_TOPIC_LENGTH} 字，当前 ${text.length} 字，请精简后重试。`;
   }
@@ -48,11 +55,15 @@ export default function Analyze() {
 
     setStatus('submitting');
     setError('');
+    const startedAt = Date.now();
     try {
       const result = await analyzeTopic(text);
+      // 保证「正在生成范文…」至少可见一小段时间，避免瞬时返回导致加载态一闪而过。
+      await waitAtLeast(startedAt);
       saveResult(result);
       navigate('/result');
     } catch (err) {
+      await waitAtLeast(startedAt);
       setError(err?.message || '剖析失败，服务暂时不可用，请稍后重试。');
       setStatus('error');
     }
@@ -71,7 +82,7 @@ export default function Analyze() {
         <h1>粘贴一道作文题，得到可落笔的思路</h1>
         <p className="muted">
           本地结构化启发式引擎会判定题型、抽取核心概念与限制条件，并给出分层立意、分段提纲、
-          素材方向与风险提示。无外部模型密钥也能正常使用。
+          素材方向与风险提示；提交后还会围绕题目生成一篇示范范文与点评。无外部模型密钥时使用本地范文组件。
         </p>
       </header>
 
@@ -85,6 +96,7 @@ export default function Analyze() {
 
         <textarea
           id="topic-input"
+          data-testid="custom-topic-input"
           value={text}
           onChange={(e) => {
             setText(e.target.value);
@@ -101,7 +113,11 @@ export default function Analyze() {
             已超出 {text.length - MAX_TOPIC_LENGTH} 字，请精简后再提交。
           </p>
         )}
-        {validation && <p className="field-error" role="alert">{validation}</p>}
+        {validation && (
+          <p className="field-error" role="alert" data-testid="topic-error">
+            {validation}
+          </p>
+        )}
 
         <div className="example-row">
           <span className="example-label">示例一键填充</span>
@@ -124,7 +140,13 @@ export default function Analyze() {
         </div>
 
         <div className="form-actions">
-          <button type="button" className="btn btn-primary" onClick={submit} disabled={status === 'submitting'}>
+          <button
+            type="button"
+            className="btn btn-primary"
+            data-testid="analyze-button"
+            onClick={submit}
+            disabled={status === 'submitting'}
+          >
             {status === 'submitting' ? '正在分析…' : '开始分析'}
           </button>
           <button
@@ -141,8 +163,8 @@ export default function Analyze() {
       {status === 'submitting' && (
         <div className="state-block" role="status" aria-live="polite">
           <div className="spinner" aria-hidden="true" />
-          <p>正在剖析题面，生成立意与提纲…</p>
-          <p className="muted small">本地引擎离线运行，通常即时返回；若较慢请稍候，不要重复提交。</p>
+          <p>正在生成范文…</p>
+          <p className="muted small">同时剖析题面，生成立意与提纲；完成后会一起展示，请勿重复提交。</p>
         </div>
       )}
 
@@ -165,6 +187,8 @@ export default function Analyze() {
           <div><strong>概念与限制</strong><span>核心概念、题眼、字数与写作指令约束</span></div>
           <div><strong>立意分层</strong><span>至少 3 个方向，标注层次与切题度</span></div>
           <div><strong>分段提纲</strong><span>段落功能、字数配比与写作提示</span></div>
+          <div><strong>示范范文</strong><span>围绕题目生成约 800 字完整文章，标注学习参考</span></div>
+          <div><strong>范文点评</strong><span>从立意、结构、亮点三方面对照学习</span></div>
           <div><strong>素材与建议</strong><span>可迁移素材方向、论证建议</span></div>
           <div><strong>风险提示</strong><span>常见偏题点，避免写成占位式套话</span></div>
         </div>

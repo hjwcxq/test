@@ -192,7 +192,7 @@ export function CustomEssaySection({ essay, review, index }) {
   ].filter(([, text]) => typeof text === 'string' && text.trim());
 
   const wordCount = essay.wordCount || Array.from(essay.body.replace(/\s/g, '')).length;
-  const disclaimer = essay.disclaimer || '示范范文，仅供学习参考。';
+  const disclaimer = '示范范文，仅供学习参考';
   const copyText = [essay.title, '', essay.body, '', disclaimer].join('\n').trim();
 
   return (
@@ -206,8 +206,9 @@ export function CustomEssaySection({ essay, review, index }) {
         <article className="essay-card" data-testid="custom-essay">
           <div className="essay-card-top">
             <div>
-              <p className="essay-eyebrow">示范范文 · 约 {wordCount} 字</p>
               <h3 className="essay-title">{essay.title}</h3>
+              <p className="essay-note" role="note">{disclaimer}</p>
+              <p className="essay-eyebrow">示范范文 · 约 {wordCount} 字</p>
             </div>
             <CopyButton text={copyText} label="复制范文" />
           </div>
@@ -217,7 +218,6 @@ export function CustomEssaySection({ essay, review, index }) {
             ))}
           </div>
         </article>
-        <p className="essay-disclaimer" role="note">{disclaimer}</p>
       </Section>
 
       {dimensions.length > 0 && (

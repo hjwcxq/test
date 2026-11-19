@@ -10,8 +10,11 @@ import { DeliveryResources, resourceConfigured } from './delivery-resources.js';
 
 export const ESSAY_MIN_CHARS = 600;
 export const ESSAY_MAX_CHARS = 1200;
-export const ESSAY_DISCLAIMER = '示范范文，仅供学习参考。';
+// 页面需要以这段文字作为独立可见文案，末尾不加句号，保证精确匹配。
+export const ESSAY_DISCLAIMER = '示范范文，仅供学习参考';
 export const ESSAY_RESOURCE_ALIAS = 'zuowen_analysis';
+// 单次上游调用上限：两次尝试最多等待约 30 秒，避免页面长时间停在加载态。
+const ESSAY_UPSTREAM_TIMEOUT_MS = 15000;
 
 export class EssayGenerationError extends Error {
   constructor(message, code = 'ESSAY_GENERATION_FAILED') {
@@ -206,14 +209,19 @@ function buildMessages(topic, analysis, attempt) {
 
 async function requestModel(topic, analysis, attempt) {
   const resources = new DeliveryResources();
-  const response = await resources.request(ESSAY_RESOURCE_ALIAS, 'chat/completions', {
-    model: process.env.ESSAY_MODEL || 'deepseek-flash',
-    temperature: attempt > 0 ? 0.4 : 0.75,
-    max_tokens: 5000,
-    // 范文是明确的成篇任务，关闭额外推理可显著降低延迟，避免页面长时间停在加载态。
-    reasoning_effort: 'none',
-    messages: buildMessages(topic, analysis, attempt),
-  });
+  const response = await resources.request(
+    ESSAY_RESOURCE_ALIAS,
+    'chat/completions',
+    {
+      model: process.env.ESSAY_MODEL || 'deepseek-flash',
+      temperature: attempt > 0 ? 0.4 : 0.75,
+      max_tokens: 5000,
+      // 范文是明确的成篇任务，关闭额外推理可显著降低延迟，避免页面长时间停在加载态。
+      reasoning_effort: 'none',
+      messages: buildMessages(topic, analysis, attempt),
+    },
+    { timeoutMs: ESSAY_UPSTREAM_TIMEOUT_MS }
+  );
   const data = await response.json();
   const content = data?.choices?.[0]?.message?.content;
   if (typeof content !== 'string' || !content.trim()) {
@@ -265,8 +273,9 @@ export function essayUpstreamConfigured() {
 }
 
 /**
- * 生成范文与点评。上游已配置时失败会抛 EssayGenerationError，由接口返回可重试错误；
- * 完全未配置外部资源时使用本地组件，保证离线环境仍有真实可读的成篇内容。
+ * 生成范文与点评。上游已配置但调用失败（额度耗尽、超时、返回不合格）时，
+ * 降级为本地作文组件，页面仍展示围绕该题的真实成篇范文而不是空白占位；
+ * 只有在调用方显式注入的生成器抛错时，路由层才会返回可重试错误。
  */
 export async function generateCustomEssay(topic, analysis) {
   if (!essayUpstreamConfigured()) return composeLocalEssay(topic, analysis);
@@ -280,8 +289,8 @@ export async function generateCustomEssay(topic, analysis) {
       lastError = error;
     }
   }
-  if (lastError instanceof EssayGenerationError) throw lastError;
-  throw new EssayGenerationError(
-    `范文生成失败：${lastError?.message || '模型服务暂时不可用'}`
-  );
+
+  // 仅记录错误摘要，不包含令牌或请求体，避免凭据进入日志。
+  console.warn(`[文思] 范文上游生成失败，降级到本地组件：${lastError?.message || '未知错误'}`);
+  return { ...composeLocalEssay(topic, analysis), essayEngine: 'local-fallback' };
 }

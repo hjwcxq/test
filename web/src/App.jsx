@@ -6,7 +6,6 @@ import Detail from './pages/Detail.jsx';
 import Region from './pages/Region.jsx';
 import Analyze from './pages/Analyze.jsx';
 import Result from './pages/Result.jsx';
-import { APP_VERSION } from './version.js';
 
 class ErrorBoundary extends React.Component {
   constructor(props) {
@@ -70,14 +69,6 @@ export default function App() {
               自定义剖析
             </NavLink>
           </nav>
-          <span
-            className="app-version"
-            data-testid="app-version"
-            title="本次打开的交付版本"
-            aria-label={`当前版本：${APP_VERSION}`}
-          >
-            当前版本：<strong>{APP_VERSION}</strong>
-          </span>
         </div>
       </header>
 

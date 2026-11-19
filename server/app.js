@@ -13,6 +13,7 @@ export const DIST_DIR = path.resolve(here, '../dist');
 const INDEX_PATH = path.join(DIST_DIR, 'index.html');
 const BASE_PLACEHOLDER = '"__APP_BASE_PATH__"';
 const VERSION_PLACEHOLDER = '"__APP_VERSION__"';
+const VERSION_TEXT_PLACEHOLDER = '__APP_VERSION_TEXT__';
 const API_PREFIXES = ['/api', '/apps/p1/api'];
 
 function searchableText(prompt) {
@@ -116,14 +117,27 @@ export function resolveBase(req) {
   return /\/apps\/p1(?:\/|$)/.test(url) ? '/apps/p1' : '';
 }
 
+/** HTML 文本转义：版本号会写进页面正文，避免任何标记注入。 */
+function escapeHtml(value) {
+  return String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 /**
  * 把基础路径与版本号注入前端模板。
- * 用 JSON.stringify 安全地写进内联脚本，避免引号 / 脚本注入。
+ * 版本号同时写入内联脚本（运行时读取）与首屏可见的版本号文本节点，
+ * 这样页面无需等待前端脚本执行即可展示版本，且刷新后保持一致。
  */
 export function renderIndexHtml(template, { basePath = '', version = '' } = {}) {
+  const versionText = escapeHtml(version || 'v0.0.0-dev');
   return String(template)
     .replace(BASE_PLACEHOLDER, JSON.stringify(basePath))
-    .replace(VERSION_PLACEHOLDER, JSON.stringify(version));
+    .replace(VERSION_PLACEHOLDER, JSON.stringify(version))
+    .replaceAll(VERSION_TEXT_PLACEHOLDER, versionText);
 }
 
 function serveIndex(req, res, version, status = 200) {

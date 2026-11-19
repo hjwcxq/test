@@ -88,6 +88,22 @@ async function main() {
         assert.ok(matched[1], `${url} 版本号不能为空`);
         assert.ok(!matched[1].includes('__APP_VERSION__'), `${url} 不应残留占位符`);
         assert.equal(matched[1], expectedVersion, `${url} 版本应与构建/部署记录一致`);
+        // 版本号必须直接出现在首屏 HTML 中（无需等待前端脚本），验收定位才稳定。
+        assert.ok(
+          html.includes('data-testid="app-version"'),
+          `${url} 首屏 HTML 应包含 data-testid="app-version"`
+        );
+        assert.ok(html.includes('当前版本：'), `${url} 首屏 HTML 应包含「当前版本」文案`);
+        assert.ok(
+          html.includes(`当前版本：<strong data-version-value>${expectedVersion}</strong>`),
+          `${url} 首屏版本号文本应与部署版本一致`
+        );
+        assert.ok(!html.includes('__APP_VERSION_TEXT__'), `${url} 不应残留版本文本占位符`);
+        assert.equal(
+          (html.match(/data-testid="app-version"/g) || []).length,
+          1,
+          `${url} 版本号节点必须唯一，避免定位歧义`
+        );
         versions.push(matched[1]);
       }
       assert.equal(new Set(versions).size, 1, '根路径、/apps/p1/ 与刷新后的版本必须一致');

@@ -12,6 +12,13 @@
     <script>window.__APP_VERSION__ = "__APP_VERSION__";</script>
   </head>
   <body>
+    <!-- 当前版本号由服务端在返回 HTML 时写入（__APP_VERSION_TEXT__）：
+         首屏无需等待脚本执行即可见，也不会与 React 渲染的页头产生重复节点。 -->
+    <div class="app-version-bar">
+      <div class="container app-version-bar-inner">
+        <span class="app-version" id="app-version" data-testid="app-version" title="本次打开的交付版本">当前版本：<strong data-version-value>__APP_VERSION_TEXT__</strong></span>
+      </div>
+    </div>
     <div id="root"></div>
     <script type="module" src="./src/main.jsx"></script>
   </body>

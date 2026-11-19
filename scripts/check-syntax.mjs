@@ -17,8 +17,10 @@ const targets = [
   'server/llm.js',
   'server/essay.js',
   'server/delivery-resources.js',
+  'server/version.js',
   'web/vite.config.js',
   'web/src/base.js',
+  'web/src/version.js',
   'web/src/api.js',
   'web/src/exportText.js',
   'web/src/constants.js',
@@ -33,6 +35,7 @@ const targets = [
   'test/zhejiang.test.js',
   'test/essays.test.js',
   'test/custom-essay.test.js',
+  'test/version.test.js',
 ];
 
 for (const relative of targets) {
@@ -46,6 +49,7 @@ const data = await import('../server/data.js');
 const app = await import('../server/app.js');
 const llm = await import('../server/llm.js');
 const essay = await import('../server/essay.js');
+const version = await import('../server/version.js');
 
 assert.equal(typeof analyzer.analyzeLocal, 'function');
 assert.equal(typeof analyzer.detectQuestionType, 'function');
@@ -57,6 +61,11 @@ assert.equal(typeof app.createApp, 'function');
 assert.equal(typeof llm.analyzeTopic, 'function');
 assert.equal(typeof essay.generateCustomEssay, 'function');
 assert.equal(typeof essay.composeLocalEssay, 'function');
+assert.equal(typeof version.resolveVersion, 'function');
+assert.equal(typeof version.normalizeVersion, 'function');
+assert.match(version.normalizeVersion('1.2.3'), /^v1\.2\.3$/);
+assert.equal(typeof app.renderIndexHtml, 'function');
+assert.ok(app.renderIndexHtml('<script>window.__APP_VERSION__ = "__APP_VERSION__";</script>', { version: 'v9.9.9' }).includes('v9.9.9'));
 assert.equal(essay.ESSAY_MIN_CHARS, 600);
 assert.equal(essay.ESSAY_MAX_CHARS, 1200);
 assert.equal(data.loadPrompts().length, 3);

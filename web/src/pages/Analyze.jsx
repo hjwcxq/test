@@ -125,7 +125,7 @@ export default function Analyze() {
 
         <div className="form-actions">
           <button type="button" className="btn btn-primary" onClick={submit} disabled={status === 'submitting'}>
-            {status === 'submitting' ? '正在剖析…' : '开始剖析'}
+            {status === 'submitting' ? '正在分析…' : '开始分析'}
           </button>
           <button
             type="button"

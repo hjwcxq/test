@@ -147,6 +147,17 @@ export default function Home() {
     setParamNotice('');
   };
 
+  /**
+   * 滚动到题库区域。
+   * 这里必须用按钮而不是 href="#library"：应用使用 HashRouter，
+   * 直接改 hash 会被当作路由路径（#library → /library），渲染成「页面不存在」，
+   * 看起来就像题库为空。改为原生滚动，保持当前首页路由不变。
+   */
+  const scrollToLibrary = () => {
+    const target = document.getElementById('library');
+    if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  };
+
   return (
     <div className="page home-page">
       <section className="hero">
@@ -160,7 +171,9 @@ export default function Home() {
           </p>
           <div className="hero-actions">
             <Link className="btn btn-primary" to="/analyze">开始自定义剖析</Link>
-            <a className="btn btn-outline" href="#library">浏览真题题库</a>
+            <button type="button" className="btn btn-outline" onClick={scrollToLibrary}>
+              浏览真题题库
+            </button>
           </div>
           <p className="hero-note">内置真题均配一篇完整精彩范文与四维点评；自定义剖析聚焦解题思路，不生成整篇范文，也不作评分或逐句批改。</p>
         </div>
@@ -272,12 +285,25 @@ export default function Home() {
             description={
               hasFilter
                 ? '当前年份或关键词下没有匹配的真题，换个词试试，或清除筛选条件。'
-                : '请点击「重新加载」再试一次。'
+                : '内置真题未能载入，请点击「重新加载」再试一次。'
             }
             action={
-              <button type="button" className="btn btn-outline" onClick={() => { setYear(null); setKeyword(''); }}>
-                清除筛选条件
-              </button>
+              hasFilter ? (
+                <button
+                  type="button"
+                  className="btn btn-outline"
+                  onClick={() => {
+                    setYear(null);
+                    setKeyword('');
+                  }}
+                >
+                  清除筛选条件
+                </button>
+              ) : (
+                <button type="button" className="btn btn-outline" onClick={load}>
+                  重新加载
+                </button>
+              )
             }
           />
         )}

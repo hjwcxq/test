@@ -266,6 +266,31 @@ async function runCdp(chrome, base, cdpPort, profile) {
       assert.ok(footer.includes('把一道题目，拆成可落笔的思路'), '页脚品牌标语应保留');
     });
 
+    await check('浏览器：点击「浏览真题题库」不会离开首页，题库仍然可见', async () => {
+      const clicked = await evaluate(`
+        (() => {
+          const buttons = Array.from(document.querySelectorAll('button'));
+          const target = buttons.find((btn) => btn.textContent.trim() === '浏览真题题库');
+          if (!target) return false;
+          target.click();
+          return true;
+        })()
+      `);
+      assert.equal(clicked, true, '首页应存在「浏览真题题库」按钮');
+      await new Promise((resolve) => setTimeout(resolve, 600));
+      const state = await evaluate(`
+        ({
+          hash: window.location.hash,
+          text: document.body.innerText,
+          cards: document.querySelectorAll('a.prompt-card').length,
+        })
+      `);
+      assert.equal(state.hash, '', '点击浏览题库不应修改 hash 路由');
+      assert.ok(!state.text.includes('页面不存在'), '不应渲染「页面不存在」');
+      assert.ok(state.text.includes('上海卷高考作文真题'), '题库标题应仍然可见');
+      assert.equal(state.cards, 3, '题库卡片应仍然存在');
+    });
+
     await check('浏览器：关键词检索无结果时给出明确空状态提示', async () => {
       await evaluate(`
         (() => {

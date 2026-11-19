@@ -2,7 +2,7 @@
 FROM node:20-alpine AS builder
 WORKDIR /app
 
-# 发布版本与交付时间通过构建参数注入（Bridge / CI 传入）；未传时由业务兜底值决定。
+# 发布版本与交付时间成对注入（Bridge / CI 传入）；未传时读取仓库 delivery.json 这一份交付记录。
 ARG APP_VERSION=""
 ARG APP_DELIVERY_TIME=""
 ARG GIT_COMMIT=""
@@ -13,6 +13,7 @@ ENV GIT_COMMIT=${GIT_COMMIT}
 COPY package.json package-lock.json ./
 RUN npm ci --no-audit --no-fund
 
+COPY delivery.json ./delivery.json
 COPY web ./web
 COPY server ./server
 RUN npm run build
@@ -33,6 +34,7 @@ ENV HOST=0.0.0.0
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev --no-audit --no-fund && npm cache clean --force
 
+COPY delivery.json ./delivery.json
 COPY server ./server
 COPY data ./data
 COPY --from=builder /app/dist ./dist

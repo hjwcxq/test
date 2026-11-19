@@ -10,8 +10,7 @@ import {
   formatVersionLabel,
   normalizeDeliveryTime,
   normalizeVersion,
-  resolveDeliveryTime,
-  resolveVersion,
+  resolveDeliveryInfo,
 } from './version.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -139,7 +138,8 @@ function escapeHtml(value) {
  * 这样页面无需等待前端脚本执行即可展示版本与交付时间，且刷新后保持一致。
  */
 export function renderIndexHtml(template, { basePath = '', version = '', deliveryTime = '' } = {}) {
-  const label = formatVersionLabel(version || 'v0.0.0-dev', deliveryTime);
+  // 版本记录缺失时 formatVersionLabel 返回「版本信息未知」，不回退到上一版旧值。
+  const label = formatVersionLabel(version, deliveryTime);
   return String(template)
     .replace(BASE_PLACEHOLDER, JSON.stringify(basePath))
     .replace(VERSION_PLACEHOLDER, JSON.stringify(version))
@@ -300,9 +300,12 @@ export function createApp(options = {}) {
   const prompts = options.prompts || loadPrompts();
   const jiangsuPrompts = options.jiangsuPrompts || loadJiangsuPrompts();
   const zhejiangPrompts = options.zhejiangPrompts || loadZhejiangPrompts();
-  // 版本优先取部署注入的环境变量 / 构建产物；测试可显式传 options.version 覆盖。
-  const version = normalizeVersion(options.version) || resolveVersion();
-  const deliveryTime = normalizeDeliveryTime(options.deliveryTime) || resolveDeliveryTime();
+  // 版本号与交付时间必须来自同一条交付记录（部署注入 / 构建产物 / delivery.json）；
+  // 测试可同时传 options.version 与 options.deliveryTime 覆盖整条记录。
+  const hasOverride = options.version !== undefined || options.deliveryTime !== undefined;
+  const deliveryInfo = resolveDeliveryInfo();
+  const version = normalizeVersion(hasOverride ? options.version : deliveryInfo.version);
+  const deliveryTime = normalizeDeliveryTime(hasOverride ? options.deliveryTime : deliveryInfo.deliveredAt);
   const app = express();
   app.disable('x-powered-by');
 

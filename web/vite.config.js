@@ -2,22 +2,18 @@ import { defineConfig, loadEnv } from 'vite';
 import react from '@vitejs/plugin-react';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { formatVersionLabel, resolveDeliveryTime, resolveVersion } from '../server/version.js';
+import { formatVersionLabel, resolveDeliveryInfo } from '../server/version.js';
 
 const webRoot = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(webRoot, '..');
 
 /**
- * 构建期版本号与交付时间：与运行期共用同一套解析规则。
- * 优先取构建/部署注入的实际交付版本，未注入时使用兜底版本，
- * 因此每次发版无需修改代码中的版本号。
+ * 构建期交付记录：与运行期共用同一套解析规则。
+ * 版本号与交付时间一次性从同一条记录解析（环境变量注入 > 仓库 delivery.json），
+ * 因此每次发版只需更新交付记录，页面自动跟随，无需改代码。
  */
-function resolveBuildVersion(env) {
-  return resolveVersion(env, null);
-}
-
-function resolveBuildDeliveryTime(env) {
-  return resolveDeliveryTime(env, null);
+function resolveBuildDeliveryInfo(env) {
+  return resolveDeliveryInfo(env, null);
 }
 
 /** 把版本与交付时间写入 dist/version.json，运行阶段（未注入环境变量时）从这里读取。 */
@@ -62,8 +58,9 @@ function injectVersionText(buildVersion, buildDeliveryTime) {
 export default defineConfig(({ mode }) => {
   // .env 中的版本变量与进程环境变量都参与解析，进程环境变量优先。
   const env = { ...loadEnv(mode, projectRoot, ''), ...process.env };
-  const buildVersion = resolveBuildVersion(env);
-  const buildDeliveryTime = resolveBuildDeliveryTime(env);
+  const deliveryInfo = resolveBuildDeliveryInfo(env);
+  const buildVersion = deliveryInfo.version;
+  const buildDeliveryTime = deliveryInfo.deliveredAt;
   const commit = env.GIT_COMMIT || env.GIT_SHA || env.COMMIT_SHA || null;
 
   return {

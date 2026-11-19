@@ -1,16 +1,15 @@
 /**
  * 应用版本与交付时间解析。
  *
- * 页面展示的版本号跟随「实际交付版本」：部署/构建阶段注入什么版本，页面就展示什么版本，
- * 因此每次上线后无需再改代码。代码中只保留一个兜底值，用于本地开发或未注入版本时避免出现空版本。
+ * 版本号与交付时间来自同一条「交付记录」，不再分别维护两个常量：
+ * 1. 部署或构建注入的环境变量（APP_VERSION + APP_DELIVERY_TIME，一次交付同时给出）；
+ * 2. 构建阶段写入 dist/version.json 的交付记录；
+ * 3. 仓库根目录 delivery.json（本次交付的版本与交付时间）。
  *
- * 取值规则（按优先级从高到低）：
- * 1. 部署或构建注入的环境变量（APP_VERSION / VITE_APP_VERSION 等）；
- * 2. 构建阶段写入 dist/version.json 的版本；
- * 3. 兜底版本 DELIVERY_VERSION（最近一次成功交付记录）。
- *
- * 交付时间（deliveredAt）遵循同样的三层规则，并在页面上以「日期 时:分」展示，
- * 便于用户核对当前打开的是否为最近一次交付。
+ * 三层都按「记录」整体取值：版本与时间要么来自同一次注入，要么来自同一份构建产物，
+ * 要么来自同一个 delivery.json，避免出现版本已更新而时间仍是上一版的情况。
+ * 页面以「日期 时:分」展示交付时间，便于核对当前打开的是否为最近一次交付。
+ * 所有来源都缺失时返回空版本，页面显示「版本信息未知」，绝不回退到上一版旧值。
  *
  * 返回值统一规范化为 `vX` 形式，供服务端注入 index.html 与 /health 使用。
  */
@@ -21,11 +20,8 @@ import { fileURLToPath } from 'node:url';
 const here = path.dirname(fileURLToPath(import.meta.url));
 const DIST_VERSION_PATH = path.resolve(here, '../dist/version.json');
 
-/** 兜底版本：未注入任何构建/部署版本时展示（最近一次成功交付记录）。 */
-export const DELIVERY_VERSION = 'v11';
-
-/** 兜底交付时间：与 DELIVERY_VERSION 对应，格式固定为「YYYY-MM-DD HH:MM」。 */
-export const DELIVERY_TIME = '2026-11-19 10:13';
+/** 仓库根目录的交付记录文件：版本号与交付时间写在同一个对象里。 */
+export const DELIVERY_META_PATH = path.resolve(here, '../delivery.json');
 
 /**
  * 部署平台可能使用的版本环境变量名，按优先级从高到低。
@@ -43,6 +39,32 @@ export const VERSION_ENV_KEYS = [
 
 /** 交付时间可能使用的环境变量名，按优先级从高到低。 */
 export const DELIVERY_TIME_ENV_KEYS = ['APP_DELIVERY_TIME', 'DELIVERY_TIME', 'DELIVERED_AT'];
+
+/**
+ * 读取交付记录（默认 delivery.json）：版本号与交付时间必须来自同一份文件。
+ * 文件缺失或格式非法时返回 null，由调用方展示明确的未知状态。
+ */
+export function readDeliveryMeta(file = DELIVERY_META_PATH) {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(file, 'utf8'));
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+    return { version: parsed.version, deliveredAt: parsed.deliveredAt };
+  } catch {
+    return null;
+  }
+}
+
+const repositoryDeliveryMeta = readDeliveryMeta();
+
+/** 两位补零，模块初始化时派生交付时间即需要。 */
+const pad2 = (value) => String(value).padStart(2, '0');
+
+/**
+ * 兜底版本与交付时间：唯一来源是仓库交付记录 delivery.json，
+ * 两者取自同一条记录，不再各自维护常量。
+ */
+export const DELIVERY_VERSION = normalizeVersion(repositoryDeliveryMeta?.version);
+export const DELIVERY_TIME = normalizeDeliveryTime(repositoryDeliveryMeta?.deliveredAt);
 
 let buildInfoCache;
 
@@ -84,18 +106,48 @@ export function envVersion(env = process.env) {
 }
 
 /**
- * 解析当前应展示的版本号：优先使用部署/构建注入的实际交付版本，
- * 未注入时回退到构建产物中的版本，最后才使用兜底版本。
+ * 解析当前应展示的交付记录：按「环境变量 → 构建产物 → 仓库 delivery.json」整体取值，
+ * 返回的 version 与 deliveredAt 始终来自同一层，不会出现版本与时间各自回退的情况。
+ * 全部缺失时两者为空，页面显示「版本信息未知」。
  */
-export function resolveVersion(env = process.env, buildInfo = readBuildInfo()) {
-  return envVersion(env) || normalizeVersion(buildInfo?.version) || DELIVERY_VERSION;
+export function resolveDeliveryInfo(
+  env = process.env,
+  buildInfo = readBuildInfo(),
+  meta = readDeliveryMeta()
+) {
+  const injectedVersion = envVersion(env);
+  const injectedTime = envDeliveryTime(env);
+  if (injectedVersion || injectedTime) {
+    // 只注入版本时，只有交付记录中的版本与之一致才补齐同一版本的交付时间，
+    // 绝不把新版本与上一版的时间拼在一起。
+    let deliveredAt = injectedTime;
+    if (!deliveredAt && injectedVersion === normalizeVersion(meta?.version)) {
+      deliveredAt = normalizeDeliveryTime(meta?.deliveredAt);
+    }
+    return { version: injectedVersion, deliveredAt, source: 'env' };
+  }
+
+  const builtVersion = normalizeVersion(buildInfo?.version);
+  const builtTime = normalizeDeliveryTime(buildInfo?.deliveredAt);
+  if (builtVersion || builtTime) {
+    return { version: builtVersion, deliveredAt: builtTime, source: 'build' };
+  }
+
+  return {
+    version: normalizeVersion(meta?.version),
+    deliveredAt: normalizeDeliveryTime(meta?.deliveredAt),
+    source: meta ? 'repository' : 'missing',
+  };
 }
 
-const pad2 = (value) => String(value).padStart(2, '0');
+/** 解析当前应展示的版本号（与交付时间同源）。 */
+export function resolveVersion(env = process.env, buildInfo = readBuildInfo(), meta) {
+  return resolveDeliveryInfo(env, buildInfo, meta).version;
+}
 
 /**
  * 规范化为「YYYY-MM-DD HH:MM」：只保留交付时刻的日期与时分。
- * 支持 `2026-11-19 10:13`、`2026-11-19T10:13`、ISO 时间戳等写法；
+ * 支持 `2026-11-19 10:34`、`2026-11-19T10:34`、ISO 时间戳等写法；
  * 无法识别（或会写进 HTML 的危险字符）时返回空字符串，由调用方回退。
  */
 export function normalizeDeliveryTime(raw) {
@@ -131,18 +183,19 @@ export function envDeliveryTime(env = process.env) {
   return '';
 }
 
-/**
- * 解析当前应展示的交付时间：部署/构建注入优先，其次是构建产物记录，
- * 最后回退到与兜底版本对应的交付时间。
- */
-export function resolveDeliveryTime(env = process.env, buildInfo = readBuildInfo()) {
-  return envDeliveryTime(env) || normalizeDeliveryTime(buildInfo?.deliveredAt) || DELIVERY_TIME;
+/** 解析当前应展示的交付时间（与版本号同源）。 */
+export function resolveDeliveryTime(env = process.env, buildInfo = readBuildInfo(), meta) {
+  return resolveDeliveryInfo(env, buildInfo, meta).deliveredAt;
 }
 
-/** 生成页面顶部展示文案：版本号 + 交付时间（日期 + 时分）。 */
+/**
+ * 生成页面顶部展示文案：版本号 + 交付时间（日期 + 时分）。
+ * 版本记录缺失时明确显示「版本信息未知」，不使用任何上一版旧值。
+ */
 export function formatVersionLabel(version, deliveryTime) {
-  const versionText = String(version ?? '').trim() || DELIVERY_VERSION;
+  const versionText = String(version ?? '').trim();
   const timeText = normalizeDeliveryTime(deliveryTime);
+  if (!versionText || versionText === '__APP_VERSION__') return '版本信息未知';
   if (timeText) return `当前版本：${versionText} · 交付时间：${timeText}`;
   return `当前版本：${versionText}`;
 }

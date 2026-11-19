@@ -98,6 +98,7 @@ async function main() {
           html.includes(`当前版本：${expectedVersion}</span>`),
           `${url} 首屏版本号文本应与部署版本一致`
         );
+        assert.ok(!/当前版本[:：]\s*v7/.test(html), `${url} 不应再展示 v7 等旧版本`);
         const versionNode = html.match(/<span[^>]*data-testid="app-version"[^>]*>([\s\S]*?)<\/span>/);
         assert.ok(versionNode, `${url} 应能定位版本号节点`);
         assert.ok(

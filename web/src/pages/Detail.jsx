@@ -180,7 +180,7 @@ function JiangsuDetail({ prompt }) {
             <Badge tone="seal">{prompt.title}</Badge>
           </div>
           <h1>{prompt.title} · 审题立意与写作提示</h1>
-          <p className="muted">江苏语文高考采用新课标I卷；以下为指导内容，不代表官方评分标准。</p>
+          <p className="muted">写作指导：江苏语文高考采用新课标I卷；以下内容不代表官方评分标准。</p>
         </div>
         <div className="detail-actions">
           <CopyButton text={jiangsuPromptToText(prompt)} label="复制审题与写作提示" />
@@ -295,7 +295,7 @@ export default function Detail() {
             <Badge tone="seal">{prompt.title}</Badge>
           </div>
           <h1>{prompt.title} · 解题思路全解</h1>
-          <p className="muted">结构框架建议：{prompt.structure?.wordBudget}</p>
+          <p className="muted">写作指导 · 结构框架建议：{prompt.structure?.wordBudget}</p>
         </div>
         <div className="detail-actions">
           <CopyButton text={promptToText(prompt)} label="复制解题内容" />

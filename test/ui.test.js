@@ -2,7 +2,8 @@
  * 展示层回归守卫：
  * 1. 页面不再渲染「内置 2022—2024」这类年份来源说明；
  * 2. 内置题卡片仍保留年份、题干摘要、标签与解题入口；
- * 3. 自定义题目剖析入口与路由未被影响。
+ * 3. 自定义题目剖析入口与路由未被影响；
+ * 4. 首页「浏览真题题库」不修改 hash 路由（否则 HashRouter 会渲染「页面不存在」）。
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -36,4 +37,22 @@ test('自定义剖析入口与题目详情路由保持可用', () => {
 
   const home = read('web/src/pages/Home.jsx');
   assert.ok(home.includes('开始自定义剖析'), '首页应保留自定义剖析入口');
+});
+
+test('首页「浏览真题题库」不跳转 hash 路由，避免题库消失', () => {
+  const home = read('web/src/pages/Home.jsx');
+  // HashRouter 下 href="#library" 会被解析成 /library 路由，渲染「页面不存在」，
+  // 表现为题库区域消失。必须使用按钮 + scrollIntoView 保持首页路由。
+  assert.ok(!/<a[^>]*href="#library"/.test(home), '不应再使用 href="#library" 锚点');
+  assert.ok(home.includes('scrollToLibrary'), '应通过按钮滚动到题库区域');
+  assert.ok(home.includes("document.getElementById('library')"), '应直接定位题库容器');
+});
+
+test('三套题库详情页均含可识别的「写作指导」与范文点评板块', () => {
+  const detail = read('web/src/pages/Detail.jsx');
+  assert.ok(detail.includes('写作指导'), '详情页应出现「写作指导」标识');
+  assert.ok(detail.includes('<EssaySection'), '详情页应渲染独立范文板块');
+  const components = read('web/src/components.jsx');
+  assert.ok(components.includes('精彩范文'), '范文板块应有独立标题');
+  assert.ok(components.includes('范文点评'), '点评板块应有独立标题');
 });

@@ -368,7 +368,7 @@ textarea:focus-visible {
 .feature-card h3 { font-size: 17px; color: var(--seal); margin-bottom: 8px; }
 .feature-card p { color: var(--ink-soft); font-size: 13.5px; }
 
-.library { margin-top: 42px; }
+.library { margin-top: 42px; scroll-margin-top: 86px; }
 .region-tabs {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));

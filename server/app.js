@@ -6,14 +6,20 @@ import { REQUIRED_YEARS, loadJiangsuPrompts, loadPrompts, loadZhejiangPrompts } 
 import { analyzeTopic } from './llm.js';
 import { EssayGenerationError } from './essay.js';
 import { MAX_TOPIC_LENGTH } from './analyzer.js';
-import { normalizeVersion, resolveVersion } from './version.js';
+import {
+  formatVersionLabel,
+  normalizeDeliveryTime,
+  normalizeVersion,
+  resolveDeliveryTime,
+  resolveVersion,
+} from './version.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 export const DIST_DIR = path.resolve(here, '../dist');
 const INDEX_PATH = path.join(DIST_DIR, 'index.html');
 const BASE_PLACEHOLDER = '"__APP_BASE_PATH__"';
 const VERSION_PLACEHOLDER = '"__APP_VERSION__"';
-const VERSION_TEXT_PLACEHOLDER = '__APP_VERSION_TEXT__';
+const VERSION_LABEL_PLACEHOLDER = '__APP_VERSION_LABEL__';
 const API_PREFIXES = ['/api', '/apps/p1/api'];
 
 function searchableText(prompt) {
@@ -128,19 +134,19 @@ function escapeHtml(value) {
 }
 
 /**
- * 把基础路径与版本号注入前端模板。
- * 版本号同时写入内联脚本（运行时读取）与首屏可见的版本号文本节点，
- * 这样页面无需等待前端脚本执行即可展示版本，且刷新后保持一致。
+ * 把基础路径、版本号与交付时间注入前端模板。
+ * 版本号同时写入内联脚本（运行时读取）与首屏可见的版本文案，
+ * 这样页面无需等待前端脚本执行即可展示版本与交付时间，且刷新后保持一致。
  */
-export function renderIndexHtml(template, { basePath = '', version = '' } = {}) {
-  const versionText = escapeHtml(version || 'v0.0.0-dev');
+export function renderIndexHtml(template, { basePath = '', version = '', deliveryTime = '' } = {}) {
+  const label = formatVersionLabel(version || 'v0.0.0-dev', deliveryTime);
   return String(template)
     .replace(BASE_PLACEHOLDER, JSON.stringify(basePath))
     .replace(VERSION_PLACEHOLDER, JSON.stringify(version))
-    .replaceAll(VERSION_TEXT_PLACEHOLDER, versionText);
+    .replaceAll(VERSION_LABEL_PLACEHOLDER, escapeHtml(label));
 }
 
-function serveIndex(req, res, version, status = 200) {
+function serveIndex(req, res, version, deliveryTime, status = 200) {
   let html;
   try {
     html = fs.readFileSync(INDEX_PATH, 'utf8');
@@ -153,7 +159,7 @@ function serveIndex(req, res, version, status = 200) {
           '<body><h1>前端资源尚未构建</h1><p>请先执行 npm run build，再启动服务。</p></body></html>'
       );
   }
-  const rendered = renderIndexHtml(html, { basePath: resolveBase(req), version });
+  const rendered = renderIndexHtml(html, { basePath: resolveBase(req), version, deliveryTime });
   // 页面内嵌部署版本与基础路径，任何一层缓存陈旧都会让刷新后看到旧版本号，
   // 因此 HTML 一律不缓存；静态资源仍使用文件名指纹与长缓存。
   res.setHeader('Cache-Control', 'no-store, max-age=0');
@@ -162,7 +168,7 @@ function serveIndex(req, res, version, status = 200) {
   return res.status(status).type('html').send(rendered);
 }
 
-function health(version) {
+function health(version, deliveryTime) {
   return (_req, res) => {
     res.setHeader('Cache-Control', 'no-store, max-age=0');
     return res.status(200).json({
@@ -170,6 +176,7 @@ function health(version) {
       healthy: true,
       service: 'wensi-essay-guide',
       version,
+      deliveredAt: deliveryTime,
       uptimeSeconds: Math.floor(process.uptime()),
       timestamp: new Date().toISOString(),
     });
@@ -295,6 +302,7 @@ export function createApp(options = {}) {
   const zhejiangPrompts = options.zhejiangPrompts || loadZhejiangPrompts();
   // 版本优先取部署注入的环境变量 / 构建产物；测试可显式传 options.version 覆盖。
   const version = normalizeVersion(options.version) || resolveVersion();
+  const deliveryTime = normalizeDeliveryTime(options.deliveryTime) || resolveDeliveryTime();
   const app = express();
   app.disable('x-powered-by');
 
@@ -309,8 +317,8 @@ export function createApp(options = {}) {
       error: { code: 'API_NOT_FOUND', message: '接口不存在，请检查请求路径后重试。' },
     });
 
-  app.get('/health', health(version));
-  app.get('/apps/p1/health', health(version));
+  app.get('/health', health(version, deliveryTime));
+  app.get('/apps/p1/health', health(version, deliveryTime));
 
   for (const prefix of API_PREFIXES) {
     app.use(prefix, api);
@@ -326,7 +334,7 @@ export function createApp(options = {}) {
   });
 
   // 显式首页路由放在静态托管之前，保证 index.html 一定经过基础路径注入。
-  const indexHandler = (req, res) => serveIndex(req, res, version);
+  const indexHandler = (req, res) => serveIndex(req, res, version, deliveryTime);
   app.get(['/', '/apps/p1/', '/index.html', '/apps/p1/index.html'], indexHandler);
 
   const staticOptions = {
@@ -344,7 +352,7 @@ export function createApp(options = {}) {
   // SPA 回退：HTML 请求返回前端 index.html（支持 /apps/p1/ 下刷新子页面），其余返回 JSON 404。
   app.use((req, res) => {
     if (req.method === 'GET' && req.accepts('html') && !req.path.startsWith('/api')) {
-      return serveIndex(req, res, version);
+      return serveIndex(req, res, version, deliveryTime);
     }
     return res.status(404).json({
       error: { code: 'NOT_FOUND', message: '请求的资源不存在，请检查地址后重试。' },

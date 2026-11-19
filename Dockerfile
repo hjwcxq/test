@@ -2,10 +2,12 @@
 FROM node:20-alpine AS builder
 WORKDIR /app
 
-# 发布版本通过构建参数注入（Bridge / CI 传入）；未传时由构建时间戳生成唯一版本。
+# 发布版本与交付时间通过构建参数注入（Bridge / CI 传入）；未传时由业务兜底值决定。
 ARG APP_VERSION=""
+ARG APP_DELIVERY_TIME=""
 ARG GIT_COMMIT=""
 ENV APP_VERSION=${APP_VERSION}
+ENV APP_DELIVERY_TIME=${APP_DELIVERY_TIME}
 ENV GIT_COMMIT=${GIT_COMMIT}
 
 COPY package.json package-lock.json ./
@@ -19,9 +21,11 @@ RUN npm run build
 FROM node:20-alpine AS runtime
 WORKDIR /app
 
-# 支持在部署时用 APP_VERSION 覆盖展示版本，无需重新构建前端。
+# 支持在部署时用 APP_VERSION / APP_DELIVERY_TIME 覆盖展示版本与交付时间，无需重新构建前端。
 ARG APP_VERSION=""
+ARG APP_DELIVERY_TIME=""
 ENV APP_VERSION=${APP_VERSION}
+ENV APP_DELIVERY_TIME=${APP_DELIVERY_TIME}
 ENV NODE_ENV=production
 ENV PORT=8080
 ENV HOST=0.0.0.0

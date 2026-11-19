@@ -95,3 +95,29 @@ test('自定义题目输入框为空时使用「开始分析」并给出非空�
     assert.ok(source.includes('不能为空'), '应有题目不能为空的校验提示');
   }
 });
+
+test('地区入口使用稳定的 /region 路由，加载中点击也不会退回首页', () => {
+  const home = read('web/src/pages/Home.jsx');
+  assert.ok(home.includes('to={`/region/${group.key}`}'), '地区卡片应指向稳定的地区路由');
+  assert.ok(
+    !home.includes("latest ? `/prompts/${latest.id}` : '/'"),
+    '地区卡片不应在数据未载入时退化为首页链接'
+  );
+  assert.ok(!home.includes('latestPrompt'), '不再依赖已加载数据计算入口地址');
+
+  const app = read('web/src/App.jsx');
+  assert.ok(app.includes('path="/region/:region"'), '应注册地区入口路由');
+
+  const region = read('web/src/pages/Region.jsx');
+  for (const needle of ['正在载入', '重新加载', 'ErrorState', 'EmptyState', '<Navigate']) {
+    assert.ok(region.includes(needle), `地区入口页应包含「${needle}」`);
+  }
+  assert.ok(
+    region.includes('replace'),
+    '地区入口解析完成后应使用 replace 跳转，避免返回时停留在加载页'
+  );
+  assert.ok(
+    region.includes('to={`/prompts/${resolved.id}`}'),
+    '地区入口解析完成后应跳转到真实题目详情而非首页'
+  );
+});

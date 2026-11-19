@@ -392,7 +392,7 @@ export default function Home() {
               if (analyzeError) setAnalyzeError('');
             }}
             placeholder={'在此粘贴或输入作文题目，支持多行。\n例如：关于坚持与变通'}
-            rows={5}
+            rows={12}
             spellCheck={false}
           />
           {topicError && <p className="field-error" role="alert">{topicError}</p>}

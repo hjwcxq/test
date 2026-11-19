@@ -9,8 +9,8 @@ const projectRoot = path.resolve(webRoot, '..');
 
 /**
  * 构建期版本号：与运行期共用同一套解析规则。
- * 默认取当前交付基线 v8；只有部署/构建显式注入更高的大版本时才覆盖，
- * 避免旧环境变量或旧构建记录把页面版本回退成 v7 等旧版本。
+ * 优先取构建/部署注入的实际交付版本，未注入时使用兜底版本，
+ * 因此每次发版无需修改代码中的版本号。
  */
 function resolveBuildVersion(env) {
   return resolveVersion(env, null);

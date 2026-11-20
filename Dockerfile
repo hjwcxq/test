@@ -2,7 +2,8 @@
 FROM node:20-alpine AS builder
 WORKDIR /app
 
-# 发布版本与交付时间成对注入（Bridge / CI 传入）；未传时读取仓库 delivery.json 这一份交付记录。
+# 版本由 scripts/delivery-index.mjs 依据交付历史自动生成并写入 delivery.json；
+# 部署平台如能注入 APP_VERSION / APP_DELIVERY_TIME，则优先使用注入值。
 ARG APP_VERSION=""
 ARG APP_DELIVERY_TIME=""
 ARG GIT_COMMIT=""
@@ -14,6 +15,7 @@ COPY package.json package-lock.json ./
 RUN npm ci --no-audit --no-fund
 
 COPY delivery.json ./delivery.json
+COPY scripts ./scripts
 COPY web ./web
 COPY server ./server
 RUN npm run build
@@ -22,9 +24,10 @@ RUN npm run build
 FROM node:20-alpine AS runtime
 WORKDIR /app
 
-# 支持在部署时用 APP_VERSION / APP_DELIVERY_TIME 覆盖展示版本与交付时间，无需重新构建前端；
-# 也可设置 APP_DELIVERY_FILE 指向部署挂载的交付记录文件，页面每次请求都读取最新记录，
-# 交付完成后刷新即跟随新版本。
+# 运行阶段每次请求都解析当前交付记录：
+# - 部署注入 APP_VERSION / APP_DELIVERY_TIME 时直接使用；
+# - 否则读取构建产物 dist/version.json 中的自动版本，交付时间取容器首次启动时刻；
+# - 也可设置 APP_DELIVERY_FILE 指向部署挂载的交付记录文件，替换后刷新即生效。
 ARG APP_VERSION=""
 ARG APP_DELIVERY_TIME=""
 ENV APP_VERSION=${APP_VERSION}
@@ -36,7 +39,8 @@ ENV HOST=0.0.0.0
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev --no-audit --no-fund && npm cache clean --force
 
-COPY delivery.json ./delivery.json
+# 直接复用构建阶段自动生成的交付记录，保证运行阶段与 dist/version.json 同源。
+COPY --from=builder /app/delivery.json ./delivery.json
 COPY server ./server
 COPY data ./data
 COPY --from=builder /app/dist ./dist

@@ -9,14 +9,16 @@ import fs from 'node:fs';
 import net from 'node:net';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { formatVersionLabel, resolveDeliveryTime, resolveVersion } from '../server/version.js';
+import { formatVersionLabel } from '../server/version.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const results = [];
 let serverStderr = '';
-const expectedVersion = resolveVersion(process.env);
-const expectedDeliveryTime = resolveDeliveryTime(process.env);
-const expectedLabel = formatVersionLabel(expectedVersion, expectedDeliveryTime);
+// 期望值在服务真实启动后从 /health 读取：版本与时间来自运行实例本身，
+// 不再由脚本另行猜测，避免测试脚本自身写死历史版本。
+let expectedVersion = '';
+let expectedDeliveryTime = '';
+let expectedLabel = '';
 
 function check(label, fn) {
   return Promise.resolve()
@@ -69,24 +71,39 @@ async function main() {
   try {
     await waitForHealth(base, child);
 
+    // 以运行实例自身返回的记录为唯一期望值，避免脚本与页面各写一份版本。
+    const healthBody = await (await fetch(`${base}/health`)).json();
+    expectedVersion = healthBody.version;
+    expectedDeliveryTime = healthBody.deliveredAt;
+    expectedLabel = formatVersionLabel(expectedVersion, expectedDeliveryTime);
+    assert.match(expectedVersion, /^v[0-9A-Za-z]/, '运行实例应返回有效版本号');
+    assert.match(expectedDeliveryTime, /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/, '运行实例应返回到分钟的交付时间');
+
     await check('GET /health 返回 200、健康状态、当前版本与交付时间', async () => {
       const r = await fetch(`${base}/health`);
       assert.equal(r.status, 200);
       const body = await r.json();
       assert.equal(body.status, 'ok');
       assert.equal(body.healthy, true);
-      assert.match(body.version, /^v[0-9A-Za-z]/, '健康检查应返回版本号');
-      assert.equal(body.version, expectedVersion, '健康检查版本应与构建/部署配置一致');
-      assert.equal(body.deliveredAt, expectedDeliveryTime, '健康检查交付时间应与构建/部署配置一致');
+      assert.equal(body.version, expectedVersion);
+      assert.equal(body.deliveredAt, expectedDeliveryTime);
     });
 
-    await check('GET /version 与 /health 同源返回当前交付版本', async () => {
-      for (const pathname of ['/version', '/apps/p1/version']) {
+    await check('GET /version.json 与 /health 同源、禁止缓存且无 ETag', async () => {
+      for (const pathname of [
+        '/version',
+        '/version.json',
+        '/apps/p1/version',
+        '/apps/p1/version.json',
+      ]) {
         const r = await fetch(`${base}${pathname}`);
         assert.equal(r.status, 200);
+        assert.match(r.headers.get('content-type') || '', /application\/json/);
+        assert.match(r.headers.get('cache-control') || '', /no-store/, `${pathname} 必须禁止缓存`);
+        assert.equal(r.headers.get('etag'), null, `${pathname} 不应返回 ETag`);
         const body = await r.json();
-        assert.equal(body.version, expectedVersion, `${pathname} 版本应与部署记录一致`);
-        assert.equal(body.deliveredAt, expectedDeliveryTime, `${pathname} 交付时间应与部署记录一致`);
+        assert.equal(body.version, expectedVersion, `${pathname} 版本应与运行实例一致`);
+        assert.equal(body.deliveredAt, expectedDeliveryTime, `${pathname} 交付时间应与运行实例一致`);
       }
     });
 
@@ -96,12 +113,13 @@ async function main() {
       for (const url of [`${base}/`, `${base}/apps/p1/`, `${base}/`]) {
         const r = await fetch(url);
         assert.equal(r.status, 200);
+        assert.match(r.headers.get('cache-control') || '', /no-store/, `${url} HTML 必须禁止缓存`);
         const html = await r.text();
         const matched = html.match(/window\.__APP_VERSION__ = "([^"]*)";/);
         assert.ok(matched, `${url} 应注入 window.__APP_VERSION__`);
         assert.ok(matched[1], `${url} 版本号不能为空`);
         assert.ok(!matched[1].includes('__APP_VERSION__'), `${url} 不应残留占位符`);
-        assert.equal(matched[1], expectedVersion, `${url} 版本应与构建/部署记录一致`);
+        assert.equal(matched[1], expectedVersion, `${url} 版本应与运行实例一致`);
         // 版本号必须直接出现在首屏 HTML 中（无需等待前端脚本），验收定位才稳定。
         assert.ok(
           html.includes('data-testid="app-version"'),
@@ -111,12 +129,8 @@ async function main() {
         assert.ok(html.includes('交付时间：'), `${url} 首屏 HTML 应包含「交付时间」文案`);
         assert.ok(
           html.includes(`当前版本：${expectedVersion} · 交付时间：${expectedDeliveryTime}</span>`),
-          `${url} 首屏版本文案应与部署版本及交付时间一致`
+          `${url} 首屏版本文案应与运行实例一致`
         );
-        assert.ok(!/当前版本[:：]\s*v12/.test(html), `${url} 不应再展示上一版 v12`);
-        assert.ok(!/当前版本[:：]\s*v11/.test(html), `${url} 不应再展示 v11 等旧版本`);
-        assert.ok(!/当前版本[:：]\s*v10/.test(html), `${url} 不应再展示 v10 等旧版本`);
-        assert.ok(!/当前版本[:：]\s*v7/.test(html), `${url} 不应再展示 v7 等旧版本`);
         const versionNode = html.match(/<span[^>]*data-testid="app-version"[^>]*>([\s\S]*?)<\/span>/);
         assert.ok(versionNode, `${url} 应能定位版本号节点`);
         assert.ok(
@@ -137,16 +151,21 @@ async function main() {
       assert.equal(times[0], expectedLabel, `首屏版本文案应为「${expectedLabel}」，实际「${times[0]}」`);
     });
 
-    await check('构建产物 version.json 存在且版本与交付时间可追溯', async () => {
+    await check('构建产物 version.json 与自动生成的交付记录可追溯', async () => {
       const file = path.join(root, 'dist/version.json');
       assert.ok(fs.existsSync(file), 'dist/version.json 应由构建阶段产出');
       const info = JSON.parse(fs.readFileSync(file, 'utf8'));
       assert.match(info.version, /^v[0-9A-Za-z]/, 'version.json 应包含有效版本');
-      assert.match(info.deliveredAt, /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/, 'version.json 应记录到分钟的交付时间');
       assert.ok(info.builtAt, 'version.json 应记录构建时间');
-      // 部署阶段可能用环境变量覆盖展示版本，因此只在未注入时要求与页面完全一致。
-      if (!process.env.APP_VERSION && !process.env.VITE_APP_VERSION && !process.env.DELIVERY_VERSION) {
-        assert.equal(info.version, expectedVersion, '未注入版本时 version.json 应与页面展示一致');
+      // 交付时间由运行实例启动时间确定，构建阶段留空是预期行为。
+      if (info.deliveredAt) {
+        assert.match(info.deliveredAt, /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/);
+      }
+      const meta = JSON.parse(fs.readFileSync(path.join(root, 'delivery.json'), 'utf8'));
+      assert.equal(meta.version, info.version, 'delivery.json 与 dist/version.json 应来自同一次自动推导');
+      // 部署阶段可能用环境变量/挂载文件覆盖展示版本，因此只在未注入时要求完全一致。
+      if (!process.env.APP_VERSION && !process.env.VITE_APP_VERSION && !process.env.DELIVERY_VERSION && !process.env.APP_DELIVERY_FILE) {
+        assert.equal(info.version, expectedVersion, '未注入时构建版本应与页面展示一致');
       }
     });
 

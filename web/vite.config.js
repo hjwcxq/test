@@ -2,19 +2,15 @@ import { defineConfig, loadEnv } from 'vite';
 import react from '@vitejs/plugin-react';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { formatVersionLabel, resolveDeliveryInfo } from '../server/version.js';
+import { formatDeliveryTimestamp, formatVersionLabel, resolveBuildDeliveryInfo } from '../server/version.js';
 
 const webRoot = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(webRoot, '..');
 
 /**
- * 构建期交付记录：与运行期共用同一套解析规则。
- * 版本号与交付时间一次性从同一条记录解析（环境变量注入 > 仓库 delivery.json），
- * 因此每次发版只需更新交付记录，页面自动跟随，无需改代码。
+ * 构建期交付记录：版本号由 scripts/delivery-index.mjs 依据交付历史自动生成，
+ * 这里只负责把同一条记录写入构建产物，不再手写版本常量。
  */
-function resolveBuildDeliveryInfo(env) {
-  return resolveDeliveryInfo(env, null);
-}
 
 /** 把版本与交付时间写入 dist/version.json，运行阶段（未注入环境变量时）从这里读取。 */
 function emitBuildVersion(buildVersion, buildDeliveryTime, commit) {
@@ -45,7 +41,8 @@ function emitBuildVersion(buildVersion, buildDeliveryTime, commit) {
  * 生产构建保留 `__APP_VERSION_LABEL__`，由服务端按部署版本注入（运行时可覆盖）。
  */
 function injectVersionText(buildVersion, buildDeliveryTime) {
-  const label = formatVersionLabel(buildVersion, buildDeliveryTime);
+  // 开发预览没有真实上线时刻，用当前时间占位；生产构建保留占位符由服务端注入。
+  const label = formatVersionLabel(buildVersion, buildDeliveryTime || formatDeliveryTimestamp(new Date()));
   return {
     name: 'wensi-inject-version-text',
     apply: 'serve',

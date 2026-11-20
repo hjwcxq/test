@@ -9,6 +9,7 @@
   },
   "scripts": {
     "dev": "vite --config web/vite.config.js",
+    "prebuild": "node scripts/delivery-index.mjs",
     "build": "vite build --config web/vite.config.js",
     "start": "node server/index.js",
     "test": "node --test test/*.test.js",

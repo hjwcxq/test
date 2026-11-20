@@ -12,13 +12,13 @@
     <script>window.__APP_VERSION__ = "__APP_VERSION__";</script>
   </head>
   <body>
-    <!-- 当前版本号与交付时间由服务端在返回 HTML 时写入（__APP_VERSION_LABEL__）：
-         首屏无需等待脚本执行即可见，也不会与 React 渲染的页头产生重复节点。
+    <!-- 当前版本号与交付时间由服务端按运行实例的交付记录写入（__APP_VERSION_LABEL__）；
+         页面脚本随后读取 /version.json 再同步一次，确保拿到的是当前实际生效的版本。
          节点内只放纯文本，不放行内子元素：版本文案自身即是可点击/命中区域，
          避免自动化验收用 elementFromPoint 检测时命中外层子元素而误判为不可见。 -->
     <div class="app-version-bar">
       <div class="container app-version-bar-inner">
-        <span class="app-version" id="app-version" data-testid="app-version" title="本次打开的交付版本与交付时间">__APP_VERSION_LABEL__</span>
+        <span class="app-version" id="app-version" data-testid="app-version" data-version-state="ssr" title="本次打开的交付版本与交付时间">__APP_VERSION_LABEL__</span>
       </div>
     </div>
     <div id="root"></div>

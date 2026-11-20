@@ -8,3 +8,5 @@ npm-debug.log*
 *.log
 coverage
 .DS_Store
+# 应用发布记录必须进入镜像，是应用版本的唯一依据。
+!.delivery-release.json

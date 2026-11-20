@@ -2,43 +2,58 @@
  * 页面版本标注的运行时同步。
  *
  * 页面打开后主动读取应用自身提供的 /version.json（服务端禁止缓存），
- * 用当前实际生效的版本与交付时间覆盖首屏文本；读取失败会重试一次，
- * 仍失败时显示可识别的提示，绝不再显示构建时或上一版的旧版本号。
+ * 用项目发布记录中的版本与发布时间覆盖首屏文本；读取失败会重试一次。
+ * 发布记录缺失或损坏时显示可识别的不可用提示，绝不显示历史版本号。
  */
 import { apiUrl } from './base.js';
 
 export const VERSION_ENDPOINT = apiUrl('/version.json');
-export const LOADING_LABEL = '版本信息获取中…';
-export const ERROR_LABEL = '版本信息获取失败，请刷新重试';
+export const LOADING_LABEL = '应用版本信息加载中…';
+export const UNAVAILABLE_LABEL = '应用版本信息不可用';
+export const ERROR_LABEL = '应用版本信息不可用，请刷新重试';
 
 const VERSION_PATTERN = /^v[0-9A-Za-z._+~-]+$/;
 const TIME_PATTERN = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/;
 
 /** 与 server/version.js 的展示格式保持一致。 */
-export function formatVersionLabel(version, deliveredAt) {
+export function formatVersionLabel(version, releasedAt) {
   const versionText = typeof version === 'string' ? version.trim() : '';
-  const timeText = typeof deliveredAt === 'string' ? deliveredAt.trim() : '';
-  if (!VERSION_PATTERN.test(versionText)) return LOADING_LABEL;
+  const timeText = typeof releasedAt === 'string' ? releasedAt.trim() : '';
+  if (!VERSION_PATTERN.test(versionText)) return UNAVAILABLE_LABEL;
   if (TIME_PATTERN.test(timeText)) {
-    return `当前版本：${versionText} · 交付时间：${timeText}`;
+    return `应用版本：${versionText} · 发布时间：${timeText}`;
   }
-  return `当前版本：${versionText} · 交付时间获取失败`;
+  return `应用版本：${versionText} · 发布时间不可用`;
+}
+
+/** 发布记录不可用：用于前端给出可识别提示，而不是渲染空版本。 */
+export class ReleaseUnavailableError extends Error {
+  constructor(reason) {
+    super('应用版本信息不可用');
+    this.name = 'ReleaseUnavailableError';
+    this.reason = reason || 'invalid';
+  }
 }
 
 /**
- * 校验版本接口返回体。版本号必须存在且格式合法；时间允许为空（页面会提示
- * 时间获取失败），但存在时必须是「日期 + 时分」。
+ * 校验版本接口返回体。
+ * - available === false：发布记录缺失/损坏，抛出 ReleaseUnavailableError；
+ * - available === true：版本号必须存在且格式合法，发布时间必须是「日期 时分」。
  */
-export function parseDeliveryPayload(payload) {
+export function parseReleasePayload(payload) {
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
     throw new Error('版本接口返回格式异常');
   }
+  if (payload.available === false) {
+    throw new ReleaseUnavailableError(payload.reason);
+  }
+  if (payload.available !== true) throw new Error('版本接口未声明可用状态');
+
   const version = typeof payload.version === 'string' ? payload.version.trim() : '';
-  const deliveredAt =
-    typeof payload.deliveredAt === 'string' ? payload.deliveredAt.trim() : '';
+  const releasedAt = typeof payload.releasedAt === 'string' ? payload.releasedAt.trim() : '';
   if (!VERSION_PATTERN.test(version)) throw new Error('版本号缺失或格式异常');
-  if (deliveredAt && !TIME_PATTERN.test(deliveredAt)) throw new Error('交付时间格式异常');
-  return { version, deliveredAt };
+  if (!TIME_PATTERN.test(releasedAt)) throw new Error('发布时间缺失或格式异常');
+  return { version, releasedAt };
 }
 
 async function requestOnce(timeoutMs = 5000) {
@@ -51,7 +66,7 @@ async function requestOnce(timeoutMs = 5000) {
       signal: controller.signal,
     });
     if (!response.ok) throw new Error(`版本接口 HTTP ${response.status}`);
-    return parseDeliveryPayload(await response.json());
+    return parseReleasePayload(await response.json());
   } finally {
     clearTimeout(timer);
   }
@@ -59,8 +74,8 @@ async function requestOnce(timeoutMs = 5000) {
 
 function render(element, info) {
   if (!element) return;
-  element.textContent = formatVersionLabel(info.version, info.deliveredAt);
-  element.dataset.versionState = info.deliveredAt ? 'ready' : 'partial';
+  element.textContent = formatVersionLabel(info.version, info.releasedAt);
+  element.dataset.versionState = 'ready';
 }
 
 function renderError(element) {
@@ -87,7 +102,7 @@ export function syncVersionLabel({ retryDelayMs = 500 } = {}) {
         const info = await requestOnce();
         render(element, info);
         if (typeof window !== 'undefined') window.__APP_VERSION__ = info.version;
-        return { ok: true, info, label: formatVersionLabel(info.version, info.deliveredAt) };
+        return { ok: true, info, label: formatVersionLabel(info.version, info.releasedAt) };
       } catch (error) {
         lastError = error;
         if (attempt === 0) {

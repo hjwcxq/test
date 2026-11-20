@@ -2,36 +2,20 @@
 FROM node:20-alpine AS builder
 WORKDIR /app
 
-# 版本由 scripts/delivery-index.mjs 依据交付历史自动生成并写入 delivery.json；
-# 部署平台如能注入 APP_VERSION / APP_DELIVERY_TIME，则优先使用注入值。
-ARG APP_VERSION=""
-ARG APP_DELIVERY_TIME=""
-ARG GIT_COMMIT=""
-ENV APP_VERSION=${APP_VERSION}
-ENV APP_DELIVERY_TIME=${APP_DELIVERY_TIME}
-ENV GIT_COMMIT=${GIT_COMMIT}
-
+# 应用版本唯一依据是项目自己的发布记录 .delivery-release.json，
+# 不读取交付中心注入的版本变量，也不依赖 .git 历史。
 COPY package.json package-lock.json ./
 RUN npm ci --no-audit --no-fund
 
-COPY delivery.json ./delivery.json
-COPY scripts ./scripts
-COPY web ./web
+COPY .delivery-release.json ./.delivery-release.json
 COPY server ./server
+COPY web ./web
 RUN npm run build
 
 # ---------- 运行阶段：仅保留生产依赖与构建产物 ----------
 FROM node:20-alpine AS runtime
 WORKDIR /app
 
-# 运行阶段每次请求都解析当前交付记录：
-# - 部署注入 APP_VERSION / APP_DELIVERY_TIME 时直接使用；
-# - 否则读取构建产物 dist/version.json 中的自动版本，交付时间取容器首次启动时刻；
-# - 也可设置 APP_DELIVERY_FILE 指向部署挂载的交付记录文件，替换后刷新即生效。
-ARG APP_VERSION=""
-ARG APP_DELIVERY_TIME=""
-ENV APP_VERSION=${APP_VERSION}
-ENV APP_DELIVERY_TIME=${APP_DELIVERY_TIME}
 ENV NODE_ENV=production
 ENV PORT=8080
 ENV HOST=0.0.0.0
@@ -39,8 +23,8 @@ ENV HOST=0.0.0.0
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev --no-audit --no-fund && npm cache clean --force
 
-# 直接复用构建阶段自动生成的交付记录，保证运行阶段与 dist/version.json 同源。
-COPY --from=builder /app/delivery.json ./delivery.json
+# 复用构建阶段纳入产物的发布记录，保证页面、/version.json 与镜像同源。
+COPY --from=builder /app/.delivery-release.json ./.delivery-release.json
 COPY server ./server
 COPY data ./data
 COPY --from=builder /app/dist ./dist

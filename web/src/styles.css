@@ -146,7 +146,7 @@ textarea:focus-visible {
   font-weight: 600;
 }
 
-/* ---------- 当前版本号（页面顶部右侧，随首屏 HTML 输出，不遮挡内容） ---------- */
+/* ---------- 应用版本（页面顶部右侧，随首屏 HTML 输出，不遮挡内容） ---------- */
 .app-version-bar {
   background: rgba(239, 232, 217, 0.85);
   border-bottom: 1px solid var(--line-soft);

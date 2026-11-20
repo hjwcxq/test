@@ -13,6 +13,6 @@ createRoot(document.getElementById('root')).render(
   </HashRouter>
 );
 
-// 页面打开后读取当前实际生效的交付版本与交付时间；失败时展示明确提示，
+// 页面打开后读取项目发布记录中的版本与发布时间；失败时展示明确提示，
 // 不回退到首屏 HTML 中可能过期的版本号。
 void syncVersionLabel();

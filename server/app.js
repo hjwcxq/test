@@ -7,10 +7,13 @@ import { analyzeTopic } from './llm.js';
 import { EssayGenerationError } from './essay.js';
 import { MAX_TOPIC_LENGTH } from './analyzer.js';
 import {
+  RELEASE_FILE_PATH,
+  UNAVAILABLE_DETAIL,
   formatVersionLabel,
-  normalizeDeliveryTime,
+  isDisplayTime,
+  normalizeReleasedAt,
   normalizeVersion,
-  resolveDeliveryInfo,
+  resolveReleaseInfo,
 } from './version.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -133,22 +136,23 @@ function escapeHtml(value) {
 }
 
 /**
- * 把基础路径、版本号与交付时间注入前端模板。
+ * 把基础路径、版本号与发布时间注入前端模板。
  * 版本号同时写入内联脚本（运行时读取）与首屏可见的版本文案，
- * 这样页面无需等待前端脚本执行即可展示版本与交付时间，且刷新后保持一致。
+ * 这样页面无需等待前端脚本执行即可展示版本与发布时间，且刷新后保持一致。
  */
-export function renderIndexHtml(template, { basePath = '', version = '', deliveryTime = '' } = {}) {
+export function renderIndexHtml(template, { basePath = '', version = '', releasedAt = '' } = {}) {
   // 版本号会写入内联脚本与正文，先规范化，避免任何标记/脚本注入。
   const safeVersion = normalizeVersion(version);
-  // 版本记录缺失时 formatVersionLabel 返回「版本信息获取中」，不回退到上一版旧值。
-  const label = formatVersionLabel(safeVersion, deliveryTime);
+  const safeReleasedAt = normalizeReleasedAt(releasedAt) || (isDisplayTime(releasedAt) ? releasedAt.trim() : '');
+  // 发布记录缺失/损坏时 formatVersionLabel 返回明确的不可用提示，不回退任何旧值。
+  const label = formatVersionLabel(safeVersion, safeReleasedAt);
   return String(template)
     .replace(BASE_PLACEHOLDER, JSON.stringify(basePath))
     .replace(VERSION_PLACEHOLDER, JSON.stringify(safeVersion))
     .replaceAll(VERSION_LABEL_PLACEHOLDER, escapeHtml(label));
 }
 
-function serveIndex(req, res, version, deliveryTime, status = 200) {
+function serveIndex(req, res, releaseInfo, status = 200) {
   let html;
   try {
     html = fs.readFileSync(INDEX_PATH, 'utf8');
@@ -161,24 +165,29 @@ function serveIndex(req, res, version, deliveryTime, status = 200) {
           '<body><h1>前端资源尚未构建</h1><p>请先执行 npm run build，再启动服务。</p></body></html>'
       );
   }
-  const rendered = renderIndexHtml(html, { basePath: resolveBase(req), version, deliveryTime });
-  // 页面内嵌部署版本与基础路径，任何一层缓存陈旧都会让刷新后看到旧版本号，
+  const rendered = renderIndexHtml(html, {
+    basePath: resolveBase(req),
+    version: releaseInfo.version,
+    releasedAt: releaseInfo.releasedAt,
+  });
+  // 页面内嵌应用版本与基础路径，任何一层缓存陈旧都会让刷新后看到旧版本号，
   // 因此 HTML 一律不缓存；静态资源仍使用文件名指纹与长缓存。
   setNoStore(res);
   res.setHeader('Vary', 'X-Forwarded-Prefix');
   return res.status(status).type('html').send(rendered);
 }
 
-function health(getDeliveryInfo) {
+function health(getReleaseInfo) {
   return (_req, res) => {
-    const { version, deliveredAt } = getDeliveryInfo();
+    const { available, version, releasedAt } = getReleaseInfo();
     res.setHeader('Cache-Control', 'no-store, max-age=0');
     return res.status(200).json({
       status: 'ok',
       healthy: true,
       service: 'wensi-essay-guide',
-      version,
-      deliveredAt,
+      versionAvailable: available,
+      version: available ? version : null,
+      releasedAt: available ? releasedAt : null,
       uptimeSeconds: Math.floor(process.uptime()),
       timestamp: new Date().toISOString(),
     });
@@ -186,11 +195,11 @@ function health(getDeliveryInfo) {
 }
 
 /**
- * 交付信息接口：与页面首屏、/health 共用同一条交付记录，
- * 便于部署后的自动化核对版本号与交付时间是否已跟随本次交付。
+ * 项目自身的版本接口：与页面首屏、/health 共用同一条发布记录，
+ * 便于部署后的自动化核对版本号与发布时间。
  *
  * version.json 是前端运行时读取的单一来源：必须禁止任何一层缓存，
- * 否则反向代理/CDN 可能继续返回上一版，重现「慢一版」问题。
+ * 否则反向代理/CDN 可能继续返回上一版。
  */
 function setNoStore(res) {
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
@@ -199,11 +208,29 @@ function setNoStore(res) {
   res.setHeader('Surrogate-Control', 'no-store');
 }
 
-function versionInfo(getDeliveryInfo) {
+function versionInfo(getReleaseInfo) {
   return (_req, res) => {
-    const { version, deliveredAt, source } = getDeliveryInfo();
+    const { available, version, releasedAt, releasedAtIso, reason } = getReleaseInfo();
     setNoStore(res);
-    return res.status(200).json({ version, deliveredAt, source });
+    if (!available) {
+      return res.status(200).json({
+        schema: 1,
+        available: false,
+        version: null,
+        releasedAt: null,
+        released_at: null,
+        reason,
+        message: UNAVAILABLE_DETAIL,
+      });
+    }
+    return res.status(200).json({
+      schema: 1,
+      available: true,
+      version,
+      releasedAt,
+      released_at: releasedAtIso,
+      reason: null,
+    });
   };
 }
 
@@ -324,27 +351,28 @@ export function createApp(options = {}) {
   const prompts = options.prompts || loadPrompts();
   const jiangsuPrompts = options.jiangsuPrompts || loadJiangsuPrompts();
   const zhejiangPrompts = options.zhejiangPrompts || loadZhejiangPrompts();
-  // 版本号与交付时间必须来自同一条交付记录（部署注入 / 部署挂载文件 / 构建产物 / delivery.json）；
-  // 测试可同时传 options.version 与 options.deliveryTime 覆盖整条记录。
-  const hasOverride = options.version !== undefined || options.deliveryTime !== undefined;
-  const overrideInfo = hasOverride
-    ? {
-        version: normalizeVersion(options.version),
-        deliveredAt: normalizeDeliveryTime(options.deliveryTime),
-        source: 'override',
-      }
+  // 版本与发布时间只来自项目发布记录 .delivery-release.json；测试可用
+  // options.release 直接注入一条记录，或用 options.releaseFile 指向临时记录。
+  // 每次请求都重新读取文件：发布记录替换后刷新页面即可跟随新版本，无需重启。
+  const releaseFile = options.releaseFile || RELEASE_FILE_PATH;
+  const overrideRelease = options.release
+    ? (() => {
+        const rawTime = options.release.releasedAt || options.release.released_at || '';
+        const version = normalizeVersion(options.release.version);
+        const releasedAt = normalizeReleasedAt(rawTime) || (isDisplayTime(rawTime) ? rawTime.trim() : '');
+        const available = Boolean(version && releasedAt);
+        return {
+          available,
+          version: available ? version : '',
+          releasedAt: available ? releasedAt : '',
+          releasedAtIso: available ? String(rawTime) : '',
+          reason: available ? null : 'invalid',
+        };
+      })()
     : null;
-  // 每次请求都重新解析：部署方替换注入值或挂载的交付记录后，刷新页面即可跟随新版本，
-  // 无需重启进程，也不会停留在构建时读到的上一次交付版本。
-  const runtimeEnv = options.env || process.env;
-  const currentDelivery = () => {
-    if (overrideInfo) return overrideInfo;
-    const info = resolveDeliveryInfo(runtimeEnv);
-    return {
-      version: normalizeVersion(info.version),
-      deliveredAt: normalizeDeliveryTime(info.deliveredAt),
-      source: info.source,
-    };
+  const currentRelease = () => {
+    if (overrideRelease) return overrideRelease;
+    return resolveReleaseInfo(releaseFile);
   };
   const app = express();
   app.disable('x-powered-by');
@@ -362,8 +390,8 @@ export function createApp(options = {}) {
       error: { code: 'API_NOT_FOUND', message: '接口不存在，请检查请求路径后重试。' },
     });
 
-  app.get('/health', health(currentDelivery));
-  app.get('/apps/p1/health', health(currentDelivery));
+  app.get('/health', health(currentRelease));
+  app.get('/apps/p1/health', health(currentRelease));
   // 版本接口同时提供无扩展名与 JSON 文件形式，兼容不同代理/验收脚本的读取方式。
   for (const pathname of [
     '/version',
@@ -371,7 +399,7 @@ export function createApp(options = {}) {
     '/apps/p1/version',
     '/apps/p1/version.json',
   ]) {
-    app.get(pathname, versionInfo(currentDelivery));
+    app.get(pathname, versionInfo(currentRelease));
   }
 
   for (const prefix of API_PREFIXES) {
@@ -388,10 +416,7 @@ export function createApp(options = {}) {
   });
 
   // 显式首页路由放在静态托管之前，保证 index.html 一定经过基础路径与版本注入。
-  const indexHandler = (req, res) => {
-    const { version, deliveredAt } = currentDelivery();
-    return serveIndex(req, res, version, deliveredAt);
-  };
+  const indexHandler = (req, res) => serveIndex(req, res, currentRelease());
   app.get(['/', '/apps/p1/', '/index.html', '/apps/p1/index.html'], indexHandler);
 
   const staticOptions = {
@@ -409,8 +434,7 @@ export function createApp(options = {}) {
   // SPA 回退：HTML 请求返回前端 index.html（支持 /apps/p1/ 下刷新子页面），其余返回 JSON 404。
   app.use((req, res) => {
     if (req.method === 'GET' && req.accepts('html') && !req.path.startsWith('/api')) {
-      const { version, deliveredAt } = currentDelivery();
-      return serveIndex(req, res, version, deliveredAt);
+      return serveIndex(req, res, currentRelease());
     }
     return res.status(404).json({
       error: { code: 'NOT_FOUND', message: '请求的资源不存在，请检查地址后重试。' },

@@ -9,15 +9,15 @@ import fs from 'node:fs';
 import net from 'node:net';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { formatVersionLabel } from '../server/version.js';
+import { formatVersionLabel, normalizeReleasedAt } from '../server/version.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const results = [];
 let serverStderr = '';
-// 期望值在服务真实启动后从 /health 读取：版本与时间来自运行实例本身，
-// 不再由脚本另行猜测，避免测试脚本自身写死历史版本。
+// 期望值在服务真实启动后从 /health 读取：版本与发布时间来自项目发布记录，
+// 脚本不另行猜测，避免测试脚本自己写一份版本。
 let expectedVersion = '';
-let expectedDeliveryTime = '';
+let expectedReleasedAt = '';
 let expectedLabel = '';
 
 function check(label, fn) {
@@ -71,22 +71,23 @@ async function main() {
   try {
     await waitForHealth(base, child);
 
-    // 以运行实例自身返回的记录为唯一期望值，避免脚本与页面各写一份版本。
+    // 以运行实例实际读取的发布记录为唯一期望值。
     const healthBody = await (await fetch(`${base}/health`)).json();
     expectedVersion = healthBody.version;
-    expectedDeliveryTime = healthBody.deliveredAt;
-    expectedLabel = formatVersionLabel(expectedVersion, expectedDeliveryTime);
+    expectedReleasedAt = healthBody.releasedAt;
+    expectedLabel = formatVersionLabel(expectedVersion, expectedReleasedAt);
     assert.match(expectedVersion, /^v[0-9A-Za-z]/, '运行实例应返回有效版本号');
-    assert.match(expectedDeliveryTime, /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/, '运行实例应返回到分钟的交付时间');
+    assert.match(expectedReleasedAt, /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/, '运行实例应返回到分钟的发布时间');
 
-    await check('GET /health 返回 200、健康状态、当前版本与交付时间', async () => {
+    await check('GET /health 返回 200、健康状态、应用版本与发布时间', async () => {
       const r = await fetch(`${base}/health`);
       assert.equal(r.status, 200);
       const body = await r.json();
       assert.equal(body.status, 'ok');
       assert.equal(body.healthy, true);
+      assert.equal(body.versionAvailable, true);
       assert.equal(body.version, expectedVersion);
-      assert.equal(body.deliveredAt, expectedDeliveryTime);
+      assert.equal(body.releasedAt, expectedReleasedAt);
     });
 
     await check('GET /version.json 与 /health 同源、禁止缓存且无 ETag', async () => {
@@ -102,12 +103,13 @@ async function main() {
         assert.match(r.headers.get('cache-control') || '', /no-store/, `${pathname} 必须禁止缓存`);
         assert.equal(r.headers.get('etag'), null, `${pathname} 不应返回 ETag`);
         const body = await r.json();
+        assert.equal(body.available, true, `${pathname} 应返回可用状态`);
         assert.equal(body.version, expectedVersion, `${pathname} 版本应与运行实例一致`);
-        assert.equal(body.deliveredAt, expectedDeliveryTime, `${pathname} 交付时间应与运行实例一致`);
+        assert.equal(body.releasedAt, expectedReleasedAt, `${pathname} 发布时间应与运行实例一致`);
       }
     });
 
-    await check('页面注入当前版本与交付时间，刷新后保持一致，不出现占位旧版本', async () => {
+    await check('页面注入应用版本与发布时间，刷新后保持一致，不出现占位旧版本', async () => {
       const versions = [];
       const times = [];
       for (const url of [`${base}/`, `${base}/apps/p1/`, `${base}/`]) {
@@ -125,11 +127,11 @@ async function main() {
           html.includes('data-testid="app-version"'),
           `${url} 首屏 HTML 应包含 data-testid="app-version"`
         );
-        assert.ok(html.includes('当前版本：'), `${url} 首屏 HTML 应包含「当前版本」文案`);
-        assert.ok(html.includes('交付时间：'), `${url} 首屏 HTML 应包含「交付时间」文案`);
+        assert.ok(html.includes('应用版本：'), `${url} 首屏 HTML 应包含「应用版本」文案`);
+        assert.ok(html.includes('发布时间：'), `${url} 首屏 HTML 应包含「发布时间」文案`);
         assert.ok(
-          html.includes(`当前版本：${expectedVersion} · 交付时间：${expectedDeliveryTime}</span>`),
-          `${url} 首屏版本文案应与运行实例一致`
+          html.includes(`应用版本：${expectedVersion} · 发布时间：${expectedReleasedAt}</span>`),
+          `${url} 首屏版本文案应与发布记录一致`
         );
         const versionNode = html.match(/<span[^>]*data-testid="app-version"[^>]*>([\s\S]*?)<\/span>/);
         assert.ok(versionNode, `${url} 应能定位版本号节点`);
@@ -147,26 +149,25 @@ async function main() {
         times.push(versionNode[1].trim());
       }
       assert.equal(new Set(versions).size, 1, '根路径、/apps/p1/ 与刷新后的版本必须一致');
-      assert.equal(new Set(times).size, 1, '根路径、/apps/p1/ 与刷新后的交付时间必须一致');
+      assert.equal(new Set(times).size, 1, '根路径、/apps/p1/ 与刷新后的发布时间必须一致');
       assert.equal(times[0], expectedLabel, `首屏版本文案应为「${expectedLabel}」，实际「${times[0]}」`);
     });
 
-    await check('构建产物 version.json 与自动生成的交付记录可追溯', async () => {
-      const file = path.join(root, 'dist/version.json');
-      assert.ok(fs.existsSync(file), 'dist/version.json 应由构建阶段产出');
-      const info = JSON.parse(fs.readFileSync(file, 'utf8'));
-      assert.match(info.version, /^v[0-9A-Za-z]/, 'version.json 应包含有效版本');
-      assert.ok(info.builtAt, 'version.json 应记录构建时间');
-      // 交付时间由运行实例启动时间确定，构建阶段留空是预期行为。
-      if (info.deliveredAt) {
-        assert.match(info.deliveredAt, /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/);
-      }
-      const meta = JSON.parse(fs.readFileSync(path.join(root, 'delivery.json'), 'utf8'));
-      assert.equal(meta.version, info.version, 'delivery.json 与 dist/version.json 应来自同一次自动推导');
-      // 部署阶段可能用环境变量/挂载文件覆盖展示版本，因此只在未注入时要求完全一致。
-      if (!process.env.APP_VERSION && !process.env.VITE_APP_VERSION && !process.env.DELIVERY_VERSION && !process.env.APP_DELIVERY_FILE) {
-        assert.equal(info.version, expectedVersion, '未注入时构建版本应与页面展示一致');
-      }
+    await check('项目发布记录是版本唯一来源，且与页面/接口完全一致', async () => {
+      const file = path.join(root, '.delivery-release.json');
+      assert.ok(fs.existsSync(file), '根目录应包含 .delivery-release.json');
+      const record = JSON.parse(fs.readFileSync(file, 'utf8'));
+      assert.equal(record.schema, 1);
+      assert.match(record.version, /^v[0-9A-Za-z]/, '发布记录应包含有效版本');
+      assert.match(record.released_at, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/);
+      assert.equal(record.version, expectedVersion, '发布记录版本应与页面/接口一致');
+      assert.equal(
+        normalizeReleasedAt(record.released_at),
+        expectedReleasedAt,
+        '发布记录时间应与页面/接口一致'
+      );
+      assert.equal(fs.existsSync(path.join(root, 'dist/version.json')), false, '不再生成自动推算的 dist/version.json');
+      assert.equal(fs.existsSync(path.join(root, 'delivery.json')), false, '旧 delivery.json 必须移除');
     });
 
     await check('GET /apps/p1/health 返回 200', async () => {

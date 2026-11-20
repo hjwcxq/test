@@ -20,7 +20,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const results = [];
 // 期望值由真实启动的服务返回，避免验收脚本自己写死版本。
 let expectedVersion = '';
-let expectedDeliveryTime = '';
+let expectedReleasedAt = '';
 let expectedLabel = '';
 
 /** 浏览器工具本身不可用（与应用缺陷无关）时，允许降级到真实 HTTP 校验。 */
@@ -410,7 +410,7 @@ async function runCdp(chrome, base, cdpPort, profile) {
       assert.ok(longMetrics.scrollHeight > longMetrics.clientHeight, '长文应可在框内滚动查看而不是撑破布局');
     });
 
-    await check('浏览器：页面顶部固定展示「当前版本：vX」与交付时间，刷新一致且桌面/窄屏不遮挡内容', async () => {
+    await check('浏览器：页面顶部固定展示「应用版本：vX」与发布时间，刷新一致且桌面/窄屏不遮挡内容', async () => {
       const readVersion = () =>
         evaluate(`
           (() => {
@@ -437,11 +437,11 @@ async function runCdp(chrome, base, cdpPort, profile) {
         `);
       const assertLayout = (info, label) => {
         assert.ok(info && info.visible, `${label}版本号应可见`);
-        assert.match(info.text, /当前版本[:：]\s*v/, `${label}应显示「当前版本：vX」，实际「${info?.text}」`);
+        assert.match(info.text, /应用版本[:：]\s*v/, `${label}应显示「应用版本：vX」，实际「${info?.text}」`);
         assert.match(
           info.text,
-          /交付时间[:：]\s*\d{4}-\d{2}-\d{2} \d{2}:\d{2}/,
-          `${label}应在交付日期后显示到分钟的时分，实际「${info?.text}」`
+          /发布时间[:：]\s*\d{4}-\d{2}-\d{2} \d{2}:\d{2}/,
+          `${label}应在发布日期后显示到分钟的时分，实际「${info?.text}」`
         );
         assert.equal(info.children, 0, `${label}版本号节点内不应嵌套元素，避免命中测试落到子元素`);
         assert.ok(info.hitSelf, `${label}版本号中心点被其他元素遮挡`);
@@ -459,16 +459,16 @@ async function runCdp(chrome, base, cdpPort, profile) {
       const synced = await readVersion();
       assert.equal(synced.text, first.text, '版本接口同步后应与首屏显示一致');
       const endpoint = await (await fetch(`${base}/apps/p1/version.json`)).json();
-      assert.equal(endpoint.version, expectedVersion, '版本接口应返回当前运行实例版本');
-      assert.equal(endpoint.deliveredAt, expectedDeliveryTime, '版本接口应返回当前运行实例交付时间');
+      assert.equal(endpoint.version, expectedVersion, '版本接口应返回项目发布记录版本');
+      assert.equal(endpoint.releasedAt, expectedReleasedAt, '版本接口应返回项目发布记录发布时间');
       assertLayout(first, '桌面端');
       assert.equal(
         first.text,
         expectedLabel,
-        `当前交付版本与交付时间应为「${expectedLabel}」，实际「${first?.text}」`
+        `应用版本与发布时间应为「${expectedLabel}」，实际「${first?.text}」`
       );
-      assert.ok(first.text.includes(expectedVersion), `页面应展示当前交付版本 ${expectedVersion}`);
-      assert.ok(first.text.includes(expectedDeliveryTime), `页面应展示交付时间 ${expectedDeliveryTime}`);
+      assert.ok(first.text.includes(expectedVersion), `页面应展示应用版本 ${expectedVersion}`);
+      assert.ok(first.text.includes(expectedReleasedAt), `页面应展示发布时间 ${expectedReleasedAt}`);
       assert.ok(
         await evaluate("document.querySelector('[data-testid=\"app-version\"]').closest('.app-version-bar') !== null"),
         '版本号应固定在页面顶部的版本栏内'
@@ -513,8 +513,8 @@ async function runCdp(chrome, base, cdpPort, profile) {
         const text = await evaluate(
           "document.querySelector('[data-testid=\"app-version\"]').innerText.trim()"
         );
-        assert.equal(text, '版本信息获取失败，请刷新重试');
-        assert.ok(!text.includes('当前版本：'), '获取失败时不得展示任何版本号');
+        assert.equal(text, '应用版本信息不可用，请刷新重试');
+        assert.ok(!text.includes('应用版本：'), '获取失败时不得展示任何版本号');
       } finally {
         await send('Fetch.disable').catch(() => {});
         await send('Page.navigate', { url: `${base}/apps/p1/` });
@@ -548,11 +548,11 @@ async function runCdp(chrome, base, cdpPort, profile) {
           })()
         `);
         assert.ok(info.visible, '无脚本时版本号也应可见');
-        assert.match(info.text, /当前版本[:：]\s*v/, `无脚本时应显示「当前版本：vX」，实际「${info.text}」`);
+        assert.match(info.text, /应用版本[:：]\s*v/, `无脚本时应显示「应用版本：vX」，实际「${info.text}」`);
         assert.match(
           info.text,
-          /交付时间[:：]\s*\d{4}-\d{2}-\d{2} \d{2}:\d{2}/,
-          `无脚本时应显示到分钟的交付时间，实际「${info.text}」`
+          /发布时间[:：]\s*\d{4}-\d{2}-\d{2} \d{2}:\d{2}/,
+          `无脚本时应显示到分钟的发布时间，实际「${info.text}」`
         );
         assert.ok(info.right <= info.innerWidth + 1, '无脚本时版本号不应横向溢出');
       } finally {
@@ -1755,10 +1755,10 @@ async function main() {
     // 以运行实例返回的版本与时间为唯一期望值。
     const health = await (await fetch(`${base}/health`)).json();
     expectedVersion = health.version;
-    expectedDeliveryTime = health.deliveredAt;
-    expectedLabel = formatVersionLabel(expectedVersion, expectedDeliveryTime);
+    expectedReleasedAt = health.releasedAt;
+    expectedLabel = formatVersionLabel(expectedVersion, expectedReleasedAt);
     assert.match(expectedVersion, /^v[0-9A-Za-z]/, '运行实例应返回有效版本号');
-    assert.match(expectedDeliveryTime, /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/, '运行实例应返回到分钟的交付时间');
+    assert.match(expectedReleasedAt, /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/, '运行实例应返回到分钟的发布时间');
     if (!chrome) {
       console.log('[browser] 未检测到 Chrome，执行 HTTP 层降级验证（非占位）：');
       await httpFallback(base);

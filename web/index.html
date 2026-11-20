@@ -8,17 +8,17 @@
     <title>文思 · 高考作文指导</title>
     <!-- 服务端按 X-Forwarded-Prefix / APP_BASE_PATH / 请求路径注入实际基础路径；未注入时前端自行探测。 -->
     <script>window.__APP_BASE_PATH__ = "__APP_BASE_PATH__";</script>
-    <!-- 服务端按部署环境变量 / 构建产物注入当前版本与交付时间；未注入时前端使用构建期版本。 -->
+    <!-- 服务端按项目发布记录 .delivery-release.json 注入应用版本；前端随后从 /version.json 同步。 -->
     <script>window.__APP_VERSION__ = "__APP_VERSION__";</script>
   </head>
   <body>
-    <!-- 当前版本号与交付时间由服务端按运行实例的交付记录写入（__APP_VERSION_LABEL__）；
+    <!-- 应用版本与发布时间由服务端按项目发布记录写入（__APP_VERSION_LABEL__）；
          页面脚本随后读取 /version.json 再同步一次，确保拿到的是当前实际生效的版本。
          节点内只放纯文本，不放行内子元素：版本文案自身即是可点击/命中区域，
          避免自动化验收用 elementFromPoint 检测时命中外层子元素而误判为不可见。 -->
     <div class="app-version-bar">
       <div class="container app-version-bar-inner">
-        <span class="app-version" id="app-version" data-testid="app-version" data-version-state="ssr" title="本次打开的交付版本与交付时间">__APP_VERSION_LABEL__</span>
+        <span class="app-version" id="app-version" data-testid="app-version" data-version-state="ssr" title="应用版本与发布时间">__APP_VERSION_LABEL__</span>
       </div>
     </div>
     <div id="root"></div>

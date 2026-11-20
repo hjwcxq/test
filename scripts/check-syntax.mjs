@@ -25,7 +25,8 @@ const targets = [
   'web/src/exportText.js',
   'web/src/constants.js',
   'web/src/storage.js',
-  'scripts/delivery-index.mjs',
+  'scripts/release.mjs',
+  'scripts/check-release.mjs',
   'scripts/smoke.mjs',
   'scripts/check-dockerfile.mjs',
   'scripts/browser-check.mjs',
@@ -36,7 +37,7 @@ const targets = [
   'test/zhejiang.test.js',
   'test/essays.test.js',
   'test/custom-essay.test.js',
-  'test/version.test.js',
+  'test/release.test.js',
 ];
 
 for (const relative of targets) {
@@ -62,18 +63,21 @@ assert.equal(typeof app.createApp, 'function');
 assert.equal(typeof llm.analyzeTopic, 'function');
 assert.equal(typeof essay.generateCustomEssay, 'function');
 assert.equal(typeof essay.composeLocalEssay, 'function');
-assert.equal(typeof version.resolveVersion, 'function');
+assert.equal(typeof version.readReleaseRecord, 'function');
+assert.equal(typeof version.resolveReleaseInfo, 'function');
 assert.equal(typeof version.normalizeVersion, 'function');
-assert.equal(typeof version.resolveDeliveryTime, 'function');
-assert.equal(typeof version.normalizeDeliveryTime, 'function');
+assert.equal(typeof version.normalizeReleasedAt, 'function');
 assert.match(version.normalizeVersion('1.2.3'), /^v1\.2\.3$/);
-assert.match(version.normalizeDeliveryTime('2026-11-19T10:13:00'), /^2026-11-19 10:13$/);
+assert.equal(version.normalizeReleasedAt('2026-11-20T17:03:38+08:00'), '2026-11-20 17:03');
 assert.equal(typeof app.renderIndexHtml, 'function');
 assert.ok(app.renderIndexHtml('<script>window.__APP_VERSION__ = "__APP_VERSION__";</script>', { version: 'v9.9.9' }).includes('v9.9.9'));
 assert.ok(
   app
-    .renderIndexHtml('<span>__APP_VERSION_LABEL__</span>', { version: 'v9.9.9', deliveryTime: '2026-11-19 10:13' })
-    .includes('当前版本：v9.9.9 · 交付时间：2026-11-19 10:13')
+    .renderIndexHtml('<span>__APP_VERSION_LABEL__</span>', {
+      version: 'v9.9.9',
+      releasedAt: '2026-11-20 10:13',
+    })
+    .includes('应用版本：v9.9.9 · 发布时间：2026-11-20 10:13')
 );
 assert.equal(essay.ESSAY_MIN_CHARS, 600);
 assert.equal(essay.ESSAY_MAX_CHARS, 1200);

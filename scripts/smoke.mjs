@@ -80,6 +80,16 @@ async function main() {
       assert.equal(body.deliveredAt, expectedDeliveryTime, '健康检查交付时间应与构建/部署配置一致');
     });
 
+    await check('GET /version 与 /health 同源返回当前交付版本', async () => {
+      for (const pathname of ['/version', '/apps/p1/version']) {
+        const r = await fetch(`${base}${pathname}`);
+        assert.equal(r.status, 200);
+        const body = await r.json();
+        assert.equal(body.version, expectedVersion, `${pathname} 版本应与部署记录一致`);
+        assert.equal(body.deliveredAt, expectedDeliveryTime, `${pathname} 交付时间应与部署记录一致`);
+      }
+    });
+
     await check('页面注入当前版本与交付时间，刷新后保持一致，不出现占位旧版本', async () => {
       const versions = [];
       const times = [];
@@ -103,6 +113,8 @@ async function main() {
           html.includes(`当前版本：${expectedVersion} · 交付时间：${expectedDeliveryTime}</span>`),
           `${url} 首屏版本文案应与部署版本及交付时间一致`
         );
+        assert.ok(!/当前版本[:：]\s*v12/.test(html), `${url} 不应再展示上一版 v12`);
+        assert.ok(!/当前版本[:：]\s*v11/.test(html), `${url} 不应再展示 v11 等旧版本`);
         assert.ok(!/当前版本[:：]\s*v10/.test(html), `${url} 不应再展示 v10 等旧版本`);
         assert.ok(!/当前版本[:：]\s*v7/.test(html), `${url} 不应再展示 v7 等旧版本`);
         const versionNode = html.match(/<span[^>]*data-testid="app-version"[^>]*>([\s\S]*?)<\/span>/);

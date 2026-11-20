@@ -22,7 +22,9 @@ RUN npm run build
 FROM node:20-alpine AS runtime
 WORKDIR /app
 
-# 支持在部署时用 APP_VERSION / APP_DELIVERY_TIME 覆盖展示版本与交付时间，无需重新构建前端。
+# 支持在部署时用 APP_VERSION / APP_DELIVERY_TIME 覆盖展示版本与交付时间，无需重新构建前端；
+# 也可设置 APP_DELIVERY_FILE 指向部署挂载的交付记录文件，页面每次请求都读取最新记录，
+# 交付完成后刷新即跟随新版本。
 ARG APP_VERSION=""
 ARG APP_DELIVERY_TIME=""
 ENV APP_VERSION=${APP_VERSION}

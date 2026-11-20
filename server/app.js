@@ -168,18 +168,31 @@ function serveIndex(req, res, version, deliveryTime, status = 200) {
   return res.status(status).type('html').send(rendered);
 }
 
-function health(version, deliveryTime) {
+function health(getDeliveryInfo) {
   return (_req, res) => {
+    const { version, deliveredAt } = getDeliveryInfo();
     res.setHeader('Cache-Control', 'no-store, max-age=0');
     return res.status(200).json({
       status: 'ok',
       healthy: true,
       service: 'wensi-essay-guide',
       version,
-      deliveredAt: deliveryTime,
+      deliveredAt,
       uptimeSeconds: Math.floor(process.uptime()),
       timestamp: new Date().toISOString(),
     });
+  };
+}
+
+/**
+ * 交付信息接口：与页面首屏、/health 共用同一条交付记录，
+ * 便于部署后的自动化核对版本号与交付时间是否已跟随本次交付。
+ */
+function versionInfo(getDeliveryInfo) {
+  return (_req, res) => {
+    const { version, deliveredAt, source } = getDeliveryInfo();
+    res.setHeader('Cache-Control', 'no-store, max-age=0');
+    return res.status(200).json({ version, deliveredAt, source });
   };
 }
 
@@ -300,12 +313,27 @@ export function createApp(options = {}) {
   const prompts = options.prompts || loadPrompts();
   const jiangsuPrompts = options.jiangsuPrompts || loadJiangsuPrompts();
   const zhejiangPrompts = options.zhejiangPrompts || loadZhejiangPrompts();
-  // 版本号与交付时间必须来自同一条交付记录（部署注入 / 构建产物 / delivery.json）；
+  // 版本号与交付时间必须来自同一条交付记录（部署注入 / 部署挂载文件 / 构建产物 / delivery.json）；
   // 测试可同时传 options.version 与 options.deliveryTime 覆盖整条记录。
   const hasOverride = options.version !== undefined || options.deliveryTime !== undefined;
-  const deliveryInfo = resolveDeliveryInfo();
-  const version = normalizeVersion(hasOverride ? options.version : deliveryInfo.version);
-  const deliveryTime = normalizeDeliveryTime(hasOverride ? options.deliveryTime : deliveryInfo.deliveredAt);
+  const overrideInfo = hasOverride
+    ? {
+        version: normalizeVersion(options.version),
+        deliveredAt: normalizeDeliveryTime(options.deliveryTime),
+        source: 'override',
+      }
+    : null;
+  // 每次请求都重新解析：部署方替换注入值或挂载的交付记录后，刷新页面即可跟随新版本，
+  // 无需重启进程，也不会停留在构建时读到的上一次交付版本。
+  const currentDelivery = () => {
+    if (overrideInfo) return overrideInfo;
+    const info = resolveDeliveryInfo();
+    return {
+      version: normalizeVersion(info.version),
+      deliveredAt: normalizeDeliveryTime(info.deliveredAt),
+      source: info.source,
+    };
+  };
   const app = express();
   app.disable('x-powered-by');
 
@@ -320,8 +348,10 @@ export function createApp(options = {}) {
       error: { code: 'API_NOT_FOUND', message: '接口不存在，请检查请求路径后重试。' },
     });
 
-  app.get('/health', health(version, deliveryTime));
-  app.get('/apps/p1/health', health(version, deliveryTime));
+  app.get('/health', health(currentDelivery));
+  app.get('/apps/p1/health', health(currentDelivery));
+  app.get('/version', versionInfo(currentDelivery));
+  app.get('/apps/p1/version', versionInfo(currentDelivery));
 
   for (const prefix of API_PREFIXES) {
     app.use(prefix, api);
@@ -336,8 +366,11 @@ export function createApp(options = {}) {
     return next();
   });
 
-  // 显式首页路由放在静态托管之前，保证 index.html 一定经过基础路径注入。
-  const indexHandler = (req, res) => serveIndex(req, res, version, deliveryTime);
+  // 显式首页路由放在静态托管之前，保证 index.html 一定经过基础路径与版本注入。
+  const indexHandler = (req, res) => {
+    const { version, deliveredAt } = currentDelivery();
+    return serveIndex(req, res, version, deliveredAt);
+  };
   app.get(['/', '/apps/p1/', '/index.html', '/apps/p1/index.html'], indexHandler);
 
   const staticOptions = {
@@ -355,7 +388,8 @@ export function createApp(options = {}) {
   // SPA 回退：HTML 请求返回前端 index.html（支持 /apps/p1/ 下刷新子页面），其余返回 JSON 404。
   app.use((req, res) => {
     if (req.method === 'GET' && req.accepts('html') && !req.path.startsWith('/api')) {
-      return serveIndex(req, res, version, deliveryTime);
+      const { version, deliveredAt } = currentDelivery();
+      return serveIndex(req, res, version, deliveredAt);
     }
     return res.status(404).json({
       error: { code: 'NOT_FOUND', message: '请求的资源不存在，请检查地址后重试。' },

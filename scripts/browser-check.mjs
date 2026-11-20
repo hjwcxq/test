@@ -707,6 +707,11 @@ async function runCdp(chrome, base, cdpPort, profile) {
     await check('浏览器：点击浙江地区入口，进入该地区最新真题', async () => {
       await evaluate("location.hash='#/'; true");
       await waitFor("document.body.innerText.includes('真题题库')", '返回首页');
+      // 顶部导航同样含「真题题库」文本，需等首页题库卡片真正渲染完成再断言标题。
+      await waitFor(
+        "document.querySelectorAll('#region-zhejiang a.prompt-card').length === 3",
+        '浙江题库卡片'
+      );
 
       const text = await evaluate('document.body.innerText');
       for (const needle of ['创新时代的青年担当', '故事的力量', '答案与问题', '浙江卷', '新课标I卷']) {

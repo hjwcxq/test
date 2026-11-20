@@ -3,11 +3,14 @@
  *
  * 版本号与交付时间来自同一条「交付记录」，不再分别维护两个常量：
  * 1. 部署或构建注入的环境变量（APP_VERSION + APP_DELIVERY_TIME，一次交付同时给出）；
- * 2. 构建阶段写入 dist/version.json 的交付记录；
- * 3. 仓库根目录 delivery.json（本次交付的版本与交付时间）。
+ * 2. 部署时挂载的交付记录文件（APP_DELIVERY_FILE / DELIVERY_META_FILE 指向的文件，每次请求重新读取）；
+ * 3. 构建阶段写入 dist/version.json 的交付记录；
+ * 4. 仓库根目录 delivery.json（本次交付的版本与交付时间）。
  *
- * 三层都按「记录」整体取值：版本与时间要么来自同一次注入，要么来自同一份构建产物，
- * 要么来自同一个 delivery.json，避免出现版本已更新而时间仍是上一版的情况。
+ * 各层都按「记录」整体取值：版本与时间要么来自同一次注入，要么来自同一份文件，
+ * 避免出现版本已更新而时间仍是上一版的情况。部署层（1、2）优先于构建产物，
+ * 因此每次交付只需在部署时更新注入值或挂载文件，页面即自动跟随最新版本，
+ * 不会因为构建时读到上一次交付记录而慢一版。
  * 页面以「日期 时:分」展示交付时间，便于核对当前打开的是否为最近一次交付。
  * 所有来源都缺失时返回空版本，页面显示「版本信息未知」，绝不回退到上一版旧值。
  *
@@ -39,6 +42,13 @@ export const VERSION_ENV_KEYS = [
 
 /** 交付时间可能使用的环境变量名，按优先级从高到低。 */
 export const DELIVERY_TIME_ENV_KEYS = ['APP_DELIVERY_TIME', 'DELIVERY_TIME', 'DELIVERED_AT'];
+
+/**
+ * 部署时挂载的交付记录文件路径环境变量。部署平台可在不重建镜像的前提下
+ * 把本次交付记录挂载到镜像内，并设置这些变量指向它（如 /run/delivery/delivery.json），
+ * 页面每次请求都会重新读取，交付完成后刷新即显示新版本。
+ */
+export const DELIVERY_FILE_ENV_KEYS = ['APP_DELIVERY_FILE', 'DELIVERY_META_FILE'];
 
 /**
  * 读取交付记录（默认 delivery.json）：版本号与交付时间必须来自同一份文件。
@@ -106,8 +116,33 @@ export function envVersion(env = process.env) {
 }
 
 /**
- * 解析当前应展示的交付记录：按「环境变量 → 构建产物 → 仓库 delivery.json」整体取值，
- * 返回的 version 与 deliveredAt 始终来自同一层，不会出现版本与时间各自回退的情况。
+ * 解析部署时可覆盖的交付记录文件路径：优先环境变量，未配置时使用仓库根目录 delivery.json。
+ * 容器内也可以直接把平台下发的记录挂载到 /app/delivery.json，无需设置环境变量。
+ */
+export function resolveDeliveryMetaPath(env = process.env) {
+  for (const key of DELIVERY_FILE_ENV_KEYS) {
+    const raw = env?.[key];
+    const value = typeof raw === 'string' ? raw.trim() : '';
+    if (value) return path.resolve(value);
+  }
+  return DELIVERY_META_PATH;
+}
+
+/**
+ * 读取部署时挂载的交付记录（未单独配置路径时返回 null，避免与仓库记录重复读取）。
+ * 每次调用都重新读文件，部署方替换记录后无需重启即可让页面跟随新版本。
+ * 部署方把记录挂载到镜像内的独立路径并设置 APP_DELIVERY_FILE 指向它，
+ * 优先级高于构建产物，因此下一次交付只需替换该文件。
+ */
+export function readDeploymentMeta(env = process.env) {
+  const file = resolveDeliveryMetaPath(env);
+  if (file === DELIVERY_META_PATH) return null;
+  return readDeliveryMeta(file);
+}
+
+/**
+ * 解析当前应展示的交付记录：按「环境变量 → 部署挂载文件 → 构建产物 → 仓库 delivery.json」
+ * 整体取值，返回的 version 与 deliveredAt 始终来自同一层，不会出现版本与时间各自回退的情况。
  * 全部缺失时两者为空，页面显示「版本信息未知」。
  */
 export function resolveDeliveryInfo(
@@ -117,14 +152,27 @@ export function resolveDeliveryInfo(
 ) {
   const injectedVersion = envVersion(env);
   const injectedTime = envDeliveryTime(env);
+  const deploymentMeta = readDeploymentMeta(env);
   if (injectedVersion || injectedTime) {
     // 只注入版本时，只有交付记录中的版本与之一致才补齐同一版本的交付时间，
     // 绝不把新版本与上一版的时间拼在一起。
     let deliveredAt = injectedTime;
-    if (!deliveredAt && injectedVersion === normalizeVersion(meta?.version)) {
-      deliveredAt = normalizeDeliveryTime(meta?.deliveredAt);
+    if (!deliveredAt && injectedVersion) {
+      for (const record of [deploymentMeta, meta]) {
+        if (injectedVersion === normalizeVersion(record?.version)) {
+          deliveredAt = normalizeDeliveryTime(record?.deliveredAt);
+          if (deliveredAt) break;
+        }
+      }
     }
     return { version: injectedVersion, deliveredAt, source: 'env' };
+  }
+
+  // 部署层记录：优先于构建产物，部署时替换即可让页面显示本次交付版本。
+  const deploymentVersion = normalizeVersion(deploymentMeta?.version);
+  const deploymentTime = normalizeDeliveryTime(deploymentMeta?.deliveredAt);
+  if (deploymentVersion || deploymentTime) {
+    return { version: deploymentVersion, deliveredAt: deploymentTime, source: 'deployment' };
   }
 
   const builtVersion = normalizeVersion(buildInfo?.version);

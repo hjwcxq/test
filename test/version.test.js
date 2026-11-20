@@ -1,16 +1,14 @@
 /**
  * 版本与交付时间展示的针对性测试：
- * 1. 版本规范化为「vX」且过滤不安全字符；
- * 2. 交付时间规范化为「YYYY-MM-DD HH:MM」；
- * 3. 版本号与交付时间来自同一条交付记录（delivery.json），本次为 v13 / 2026-11-19 10:45；
- * 4. 页面版本跟随部署注入 / 部署挂载记录 / 构建产物的实际交付版本，不再慢一版；
- * 5. 交付记录缺失时显示「版本信息未知」，不回退到上一版旧值；
- * 6. index.html 模板注入版本、交付时间与基础路径后可重复渲染（刷新一致）；
- * 7. /health 与 /version 返回当前版本与交付时间，便于与发布记录核对；
- * 8. 下一次交付只替换注入值或挂载记录，页面刷新即自动跟随，无需改代码或重建。
+ * 1. 版本号由交付历史自动推导（任务号去重计数），不再手写常量；
+ * 2. 版本与时间取当前运行实例的交付记录，旧环境变量/旧文件不会把页面拉回上一版；
+ * 3. 页面打开后从 /version.json 读取最新版本，接口禁止缓存；
+ * 4. 获取失败或数据异常时展示可识别提示，不回退旧版本号；
+ * 5. 既有的基础路径、题库、剖析等业务行为由其余测试与冒烟脚本覆盖。
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -19,17 +17,27 @@ import { createApp, renderIndexHtml } from '../server/app.js';
 import {
   DELIVERY_TIME,
   DELIVERY_VERSION,
-  envDeliveryTime,
-  envVersion,
+  formatDeliveryTimestamp,
   formatVersionLabel,
   normalizeDeliveryTime,
   normalizeVersion,
   readDeliveryMeta,
   resolveDeliveryInfo,
-  resolveDeliveryMetaPath,
-  resolveDeliveryTime,
-  resolveVersion,
+  runtimeStartedAt,
 } from '../server/version.js';
+import {
+  TASK_COMMIT_PATTERN,
+  computeDeliveryIndex,
+  newerVersion,
+  parseBranchTask,
+  parseTaskIds,
+  versionFromTaskIds,
+} from '../scripts/delivery-index.mjs';
+import {
+  ERROR_LABEL,
+  formatVersionLabel as formatClientVersionLabel,
+  parseDeliveryPayload,
+} from '../web/src/versionLabel.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const read = (file) => fs.readFileSync(path.join(root, file), 'utf8');
@@ -53,11 +61,15 @@ async function withServer(overrides, fn) {
   }
 }
 
+function tempDir(prefix) {
+  return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+}
+
 test('版本号统一规范化为 vX，并过滤脚本注入字符', () => {
   assert.equal(normalizeVersion('1.2.3'), 'v1.2.3');
   assert.equal(normalizeVersion('v1.2.3'), 'v1.2.3');
   assert.equal(normalizeVersion('  V 20261119.145000  '), 'v20261119.145000');
-  assert.equal(normalizeVersion('13'), 'v13');
+  assert.equal(normalizeVersion('15'), 'v15');
   assert.equal(normalizeVersion('1.0.0+build.2026'), 'v1.0.0+build.2026');
   assert.equal(normalizeVersion('1.0<script>alert(1)</script>'), 'v1.0-script-alert-1-script');
   assert.ok(!normalizeVersion('1.0<script>').includes('<'));
@@ -68,134 +80,197 @@ test('版本号统一规范化为 vX，并过滤脚本注入字符', () => {
 });
 
 test('交付时间统一规范化为「YYYY-MM-DD HH:MM」，展示到分钟', () => {
-  assert.equal(normalizeDeliveryTime('2026-11-19 10:45'), '2026-11-19 10:45');
-  assert.equal(normalizeDeliveryTime('2026-11-19T10:45'), '2026-11-19 10:45');
-  assert.equal(normalizeDeliveryTime('2026-11-19T10:45:45.000Z'), '2026-11-19 10:45');
+  assert.equal(normalizeDeliveryTime('2026-11-20 06:59'), '2026-11-20 06:59');
+  assert.equal(normalizeDeliveryTime('2026-11-20T06:59'), '2026-11-20 06:59');
+  assert.equal(normalizeDeliveryTime('2026-11-20T06:59:32.000Z'), '2026-11-20 06:59');
   assert.equal(normalizeDeliveryTime('2026-1-9 9:05'), '2026-01-09 09:05');
-  assert.equal(normalizeDeliveryTime('  2026-11-19 10:45  '), '2026-11-19 10:45');
+  assert.equal(normalizeDeliveryTime('  2026-11-20 06:59  '), '2026-11-20 06:59');
   assert.equal(normalizeDeliveryTime(''), '');
   assert.equal(normalizeDeliveryTime(null), '');
-  assert.equal(normalizeDeliveryTime('v12'), '');
+  assert.equal(normalizeDeliveryTime('latest'), '');
   assert.equal(normalizeDeliveryTime('2026-13-01 10:00'), '');
-  assert.equal(normalizeDeliveryTime('2026-11-19 24:00'), '');
-  assert.equal(normalizeDeliveryTime('2026-11-19 10:99'), '');
+  assert.equal(normalizeDeliveryTime('2026-11-20 24:00'), '');
+  assert.equal(normalizeDeliveryTime('2026-11-20 10:99'), '');
   assert.equal(normalizeDeliveryTime('<img src=x onerror=alert(1)>'), '');
   assert.equal(normalizeDeliveryTime('__APP_DELIVERY_TIME__'), '');
 });
 
-test('版本号与交付时间来自同一条交付记录 delivery.json（本次为 v13 / 2026-11-19 10:45）', () => {
+test('交付历史解析：任务号去重计数得到版本号，当前分支任务补入', () => {
+  assert.deepEqual([...parseTaskIds('实现交付任务 #1 (#2)')], [1]);
+  assert.deepEqual([...parseTaskIds('实现交付任务 #1\n实现交付任务 #1\n其他提交')], [1]);
+  assert.deepEqual([...parseTaskIds('<!-- delivery-task:42 -->\n正文')], [42]);
+  assert.deepEqual([...parseTaskIds('初始化项目')], []);
+  assert.equal(parseBranchTask('delivery/task-37'), 37);
+  assert.equal(parseBranchTask('main'), 0);
+  assert.equal(versionFromTaskIds([1, 2, 2, 6]), 'v3');
+  assert.equal(versionFromTaskIds([]), '');
+  assert.equal(newerVersion('v10', 'v11'), 'v11');
+  assert.equal(newerVersion('v11', 'v10'), 'v11');
+  assert.equal(newerVersion('v15', ''), 'v15');
+  assert.ok(TASK_COMMIT_PATTERN.test('实现交付任务 #30 (#33)'));
+});
+
+test('computeDeliveryIndex 从真实 git 历史计算版本，并保留已提交记录作为下限', () => {
+  const dir = tempDir('wensi-git-');
+  try {
+    const run = (...args) => execFileSync('git', args, { cwd: dir, encoding: 'utf8', stdio: 'pipe' });
+    run('init', '-q');
+    run('config', 'user.email', 'test@example.com');
+    run('config', 'user.name', 'test');
+    fs.writeFileSync(path.join(dir, 'history.txt'), 'init\n');
+    run('add', '.');
+    run('commit', '-q', '-m', '初始化自动交付项目');
+
+    for (const [message, file] of [
+      ['实现交付任务 #1 (#2)', 'a.txt'],
+      ['实现交付任务 #2 (#4)', 'b.txt'],
+      ['实现交付任务 #2 (#5)', 'c.txt'],
+    ]) {
+      fs.writeFileSync(path.join(dir, file), message);
+      run('add', '.');
+      run('commit', '-q', '-m', message);
+    }
+
+    run('checkout', '-q', '-b', 'delivery/task-3');
+    const file = path.join(dir, 'delivery.json');
+    fs.writeFileSync(file, JSON.stringify({ version: 'v2', deliveredAt: '' }));
+    const index = computeDeliveryIndex({ cwd: dir, env: {}, file });
+    assert.equal(index.version, 'v3', '去重任务 1、2 加当前分支任务 3 应为 v3');
+    assert.deepEqual(index.taskIds, [1, 2, 3]);
+    assert.equal(index.gitAvailable, true);
+
+    // 历史不可用（非 git 目录）时沿用已提交记录，且不倒退。
+    const empty = tempDir('wensi-nogit-');
+    try {
+      fs.writeFileSync(path.join(empty, 'delivery.json'), JSON.stringify({ version: 'v9', deliveredAt: '' }));
+      const fallback = computeDeliveryIndex({
+        cwd: empty,
+        env: {},
+        file: path.join(empty, 'delivery.json'),
+      });
+      assert.equal(fallback.gitAvailable, false);
+      assert.equal(fallback.version, 'v9');
+    } finally {
+      fs.rmSync(empty, { recursive: true, force: true });
+    }
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('仓库交付记录由构建脚本自动维护，版本与当前交付历史一致', () => {
   const meta = JSON.parse(read('delivery.json'));
-  assert.equal(meta.version, 'v13', '本次交付记录版本应为 v13');
-  assert.equal(meta.deliveredAt, '2026-11-19 10:45', '本次交付时间应为 2026-11-19 10:45');
-
-  // 兜底常量由交付记录派生，两者不可能各自维护而互相错位。
+  assert.match(meta.version, /^v\d+$/, 'delivery.json 应包含自动推导的版本号');
+  assert.equal(meta.deliveredAt, '', '交付时间由运行实例启动时间确定，构建阶段不写死');
+  const index = computeDeliveryIndex();
+  assert.equal(meta.version, index.version, 'committed delivery.json 应与交付历史推导结果一致');
   assert.equal(DELIVERY_VERSION, normalizeVersion(meta.version));
-  assert.equal(DELIVERY_TIME, normalizeDeliveryTime(meta.deliveredAt));
-  assert.equal(DELIVERY_VERSION, 'v13');
-  assert.equal(DELIVERY_TIME, '2026-11-19 10:45');
+  assert.equal(DELIVERY_TIME, '');
+});
 
-  assert.deepEqual(resolveDeliveryInfo({}, null), {
-    version: 'v13',
-    deliveredAt: '2026-11-19 10:45',
-    source: 'repository',
+test('版本与时间优先取当前实例记录；旧环境变量不会覆盖更新的构建版本', () => {
+  const build = { version: 'v15', deliveredAt: '', builtAt: '2026-11-20T06:58:50.000Z' };
+  const meta = { version: 'v10', deliveredAt: '2026-11-20 06:59' };
+  const baseEnv = { NODE_ENV: 'production', APP_STARTED_AT: '2026-11-20 07:00' };
+
+  assert.deepEqual(resolveDeliveryInfo(baseEnv, build, meta), {
+    version: 'v15',
+    deliveredAt: '2026-11-20 07:00',
+    source: 'build',
   });
 
-  // 替换同一条记录后，版本与时间一起跟随，不会出现版本变了时间没变。
-  const replaced = resolveDeliveryInfo({}, null, { version: 'v14', deliveredAt: '2026-11-20 09:05' });
-  assert.equal(replaced.version, 'v14');
-  assert.equal(replaced.deliveredAt, '2026-11-20 09:05', '版本与时间应来自同一条记录');
-
-  // 代码中不得再保留上一版的固定版本号或交付时间。
-  const source = read('server/version.js');
-  assert.ok(!source.includes("'v12'"), '不应再硬编码上一版 v12');
-  assert.ok(!source.includes("'2026-11-19 10:34'"), '不应再硬编码上一版交付时间');
-});
-
-test('版本号跟随实际交付版本，未注入时展示交付记录 v13', () => {
-  assert.equal(envVersion({ APP_VERSION: '2.0.0' }), 'v2.0.0');
-  assert.equal(envVersion({ DELIVERY_VERSION: 'v3.1.0' }), 'v3.1.0');
-  assert.equal(envVersion({ APP_VERSION: '', BUILD_VERSION: '4.2.1' }), 'v4.2.1');
-  assert.equal(envVersion({ APP_VERSION: '   ' }), '');
-
-  assert.equal(resolveVersion({}, null), 'v13', '无任何注入时应展示交付记录版本 v13');
-  assert.equal(resolveVersion({ APP_VERSION: 'v13' }, null), 'v13', '部署注入 v13 时展示 v13');
-  assert.equal(resolveVersion({ APP_VERSION: 'v14' }, null), 'v14', '新交付版本应自动展示，无需改代码');
+  // 遗留的旧注入值不得把版本拉回上一版。
   assert.equal(
-    resolveVersion({ APP_VERSION: 'v14' }, { version: 'v13' }),
-    'v14',
-    '部署注入应优先于构建产物'
-  );
-  assert.equal(resolveVersion({}, { version: 'v9.2.1' }), 'v9.2.1', '未注入环境变量时展示构建产物的实际版本');
-  assert.equal(envVersion({ GIT_COMMIT: 'a24affb' }), '', '提交哈希是构建元数据，不能当作展示版本');
-});
-
-test('交付时间跟随实际交付记录，支持环境变量与构建产物覆盖', () => {
-  assert.equal(envDeliveryTime({ APP_DELIVERY_TIME: '2026-11-19T10:45' }), '2026-11-19 10:45');
-  assert.equal(envDeliveryTime({ DELIVERY_TIME: '2026-11-19 10:45:59' }), '2026-11-19 10:45');
-  assert.equal(envDeliveryTime({ APP_DELIVERY_TIME: 'not-a-time' }), '');
-  assert.equal(envDeliveryTime({ APP_DELIVERY_TIME: '  ' }), '');
-
-  assert.equal(DELIVERY_TIME, '2026-11-19 10:45', '交付记录时间应为 2026-11-19 10:45');
-  assert.equal(resolveDeliveryTime({}, null), DELIVERY_TIME, '无注入时应展示交付记录的时间');
-  assert.equal(
-    resolveDeliveryTime({ APP_DELIVERY_TIME: '2026-11-20 09:30' }, null),
-    '2026-11-20 09:30',
-    '部署注入的交付时间应优先展示'
-  );
-  assert.equal(
-    resolveDeliveryTime({}, { deliveredAt: '2026-11-18 08:05' }),
-    '2026-11-18 08:05',
-    '未注入环境变量时展示构建产物记录的交付时间'
-  );
-  assert.equal(
-    resolveDeliveryTime({ APP_DELIVERY_TIME: '2026-11-20 09:30' }, { deliveredAt: '2026-11-18 08:05' }),
-    '2026-11-20 09:30',
-    '部署注入应优先于构建产物'
+    resolveDeliveryInfo({ ...baseEnv, APP_VERSION: 'v10', APP_DELIVERY_TIME: '2026-11-19 10:45' }, build, meta)
+      .version,
+    'v15'
   );
 
-  // 只注入版本时不能借用旧记录的交付时间，避免版本与时间来自不同交付。
-  assert.equal(resolveDeliveryInfo({ APP_VERSION: 'v14' }, null).deliveredAt, '');
-  // 注入的版本与交付记录一致时，才补齐该版本的交付时间（同一次交付）。
-  assert.deepEqual(resolveDeliveryInfo({ APP_VERSION: 'v13' }, null), {
-    version: 'v13',
-    deliveredAt: '2026-11-19 10:45',
-    source: 'env',
+  // 部署注入的新版本优先于构建产物，并配对注入时间。
+  assert.deepEqual(
+    resolveDeliveryInfo(
+      { ...baseEnv, APP_VERSION: 'v16', APP_DELIVERY_TIME: '2026-11-20 09:10' },
+      build,
+      meta
+    ),
+    { version: 'v16', deliveredAt: '2026-11-20 09:10', source: 'env' }
+  );
+
+  // 只注入版本不注入时间时，使用本实例启动时间，不借用旧记录时间。
+  assert.deepEqual(
+    resolveDeliveryInfo({ ...baseEnv, APP_VERSION: 'v16' }, build, meta),
+    { version: 'v16', deliveredAt: '2026-11-20 07:00', source: 'env' }
+  );
+
+  // 构建记录没有时间时，时间取容器首次启动时间。
+  assert.equal(
+    resolveDeliveryInfo(baseEnv, { version: 'v15', deliveredAt: '' }, meta).deliveredAt,
+    '2026-11-20 07:00'
+  );
+
+  // 生产环境无任何当前记录时不回退仓库旧版本。
+  assert.deepEqual(resolveDeliveryInfo({ NODE_ENV: 'production' }, null, meta), {
+    version: '',
+    deliveredAt: '',
+    source: 'missing',
   });
+
+  // 开发环境允许仓库记录兜底，便于本地直接启动。
+  assert.equal(resolveDeliveryInfo({ NODE_ENV: 'development' }, null, meta).version, 'v10');
 });
 
-test('交付记录缺失时显示明确的未知状态，不回退到上一版旧值', () => {
-  const missing = resolveDeliveryInfo({}, null, null);
-  assert.deepEqual(missing, { version: '', deliveredAt: '', source: 'missing' });
-  assert.equal(resolveVersion({}, null, null), '', '无交付记录时版本为空');
-  assert.equal(resolveDeliveryTime({}, null, null), '', '无交付记录时时间为空');
-  assert.equal(formatVersionLabel('', ''), '版本信息未知');
-  assert.equal(formatVersionLabel('__APP_VERSION__', ''), '版本信息未知');
+test('部署挂载的交付记录替换后刷新即生效，无需重启或重建', async () => {
+  const dir = tempDir('wensi-delivery-');
+  const file = path.join(dir, 'delivery.json');
+  try {
+    fs.writeFileSync(file, JSON.stringify({ version: 'v16', deliveredAt: '2026-11-20 09:10' }));
+    const env = { NODE_ENV: 'production', APP_DELIVERY_FILE: file };
+    assert.deepEqual(resolveDeliveryInfo(env, { version: 'v15', deliveredAt: '' }, null), {
+      version: 'v16',
+      deliveredAt: '2026-11-20 09:10',
+      source: 'deployment',
+    });
+
+    await withServer({ env }, async (base) => {
+      const first = await (await fetch(`${base}/apps/p1/version.json`)).json();
+      assert.equal(first.version, 'v16');
+      assert.equal(first.deliveredAt, '2026-11-20 09:10');
+
+      // 下一次交付：只替换挂载文件，进程不重启，刷新即显示新版本。
+      fs.writeFileSync(file, JSON.stringify({ version: 'v17', deliveredAt: '2026-11-20 11:30' }));
+      const second = await (await fetch(`${base}/apps/p1/version.json`)).json();
+      assert.equal(second.version, 'v17');
+      assert.equal(second.deliveredAt, '2026-11-20 11:30');
+    });
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('交付记录缺失/损坏时显示明确提示，不回退旧版本号', () => {
+  assert.equal(formatVersionLabel('', ''), '版本信息获取中…');
+  assert.equal(formatVersionLabel('__APP_VERSION__', ''), '版本信息获取中…');
+  assert.equal(formatVersionLabel('v15', ''), '当前版本：v15 · 交付时间获取失败');
 
   const html = renderIndexHtml(TEMPLATE, { version: '', deliveryTime: '' });
-  assert.ok(html.includes('版本信息未知'), '页面应显示明确的未知状态');
-  assert.ok(!html.includes('当前版本：v12'), '页面不得回退展示上一版 v12');
+  assert.ok(html.includes('版本信息获取中…'), '页面应显示明确的未知状态');
+  assert.ok(!/当前版本[:：]\s*v1[0-4]/.test(html), '页面不得回退展示旧版本');
   assert.ok(!html.includes('__APP_VERSION_LABEL__'), '占位符必须被替换');
 
-  // delivery.json 缺失或格式非法时回退为 null，由调用方展示未知状态。
   assert.equal(readDeliveryMeta(path.join(root, 'not-exists.json')), null);
-
-  // 配置的挂载记录不存在时不得崩溃，应继续回退到仓库交付记录。
-  const fallback = resolveDeliveryInfo({ APP_DELIVERY_FILE: path.join(root, 'not-exists.json') }, null);
-  assert.deepEqual(fallback, {
-    version: 'v13',
-    deliveredAt: '2026-11-19 10:45',
-    source: 'repository',
-  });
-  assert.equal(formatVersionLabel(fallback.version, fallback.deliveredAt).includes('版本信息未知'), false);
 });
 
 test('页面展示文案包含版本号与交付时间（日期 + 时分）', () => {
   assert.equal(
-    formatVersionLabel('v13', '2026-11-19 10:45'),
-    '当前版本：v13 · 交付时间：2026-11-19 10:45'
+    formatVersionLabel('v15', '2026-11-20 06:59'),
+    '当前版本：v15 · 交付时间：2026-11-20 06:59'
   );
-  assert.equal(formatVersionLabel('v13', ''), '当前版本：v13');
-  assert.equal(formatVersionLabel('', '2026-11-19 10:45'), '版本信息未知');
+  assert.equal(formatVersionLabel('v15', ''), '当前版本：v15 · 交付时间获取失败');
+  assert.equal(formatVersionLabel('', '2026-11-20 06:59'), '版本信息获取中…');
+  assert.equal(
+    formatClientVersionLabel('v15', '2026-11-20 06:59'),
+    formatVersionLabel('v15', '2026-11-20 06:59')
+  );
 });
 
 test('index.html 注入运行时版本、交付时间与基础路径，重复渲染（刷新）结果一致', () => {
@@ -229,175 +304,147 @@ test('index.html 注入运行时版本、交付时间与基础路径，重复渲
   assert.ok(updated.includes('当前版本：v7.6.6 · 交付时间：2026-06-02 09:05'));
   assert.ok(!updated.includes('v7.6.5'));
 
+  // 版本号会写进 HTML，任何标记都必须被规范化/转义，不能形成可执行标签。
   const escaped = renderIndexHtml(TEMPLATE, { version: '<img src=x onerror=alert(1)>' });
-  assert.ok(!escaped.includes('当前版本：<img'), '版本号文本必须做 HTML 转义');
-  assert.ok(escaped.includes('当前版本：&lt;img'), '版本号文本应以 HTML 实体输出');
+  assert.ok(!escaped.includes('当前版本：<img'), '版本号文本必须转义或规范化');
+  assert.ok(!/当前版本：[^<]*<img/i.test(escaped), '不得输出原始 img 标签');
+  assert.match(escaped, /当前版本：vimg/, '危险字符应被规范化，而不是原样输出');
+  assert.ok(!escaped.includes('"<img'), '内联脚本中的版本号也必须规范化');
 });
 
-test('GET /health 与 /version 返回与部署配置一致的当前版本与交付时间', async () => {
-  await withServer({ version: 'v8.1.2', deliveryTime: '2026-11-19 10:45' }, async (base) => {
-    for (const pathname of ['/health', '/apps/p1/health']) {
-      const first = await (await fetch(`${base}${pathname}`)).json();
-      const second = await (await fetch(`${base}${pathname}`)).json();
-      assert.equal(first.status, 'ok');
-      assert.equal(first.version, 'v8.1.2');
-      assert.equal(first.deliveredAt, '2026-11-19 10:45');
-      assert.equal(second.deliveredAt, first.deliveredAt, '重复请求（刷新）交付时间应一致');
-    }
-    for (const pathname of ['/version', '/apps/p1/version']) {
-      const info = await (await fetch(`${base}${pathname}`)).json();
-      assert.deepEqual(info, { version: 'v8.1.2', deliveredAt: '2026-11-19 10:45', source: 'override' });
+test('GET /health、/version 与 /version.json 返回同一条当前交付记录且禁止缓存', async () => {
+  await withServer({ version: 'v8.1.2', deliveryTime: '2026-11-20 06:59' }, async (base) => {
+    const health = await (await fetch(`${base}/health`)).json();
+    assert.equal(health.version, 'v8.1.2');
+    assert.equal(health.deliveredAt, '2026-11-20 06:59');
+
+    for (const pathname of ['/version', '/apps/p1/version', '/version.json', '/apps/p1/version.json']) {
+      const response = await fetch(`${base}${pathname}`);
+      assert.equal(response.status, 200, `${pathname} 应返回 200`);
+      assert.match(response.headers.get('content-type') || '', /application\/json/);
+      assert.match(response.headers.get('cache-control') || '', /no-store/, `${pathname} 必须禁止缓存`);
+      assert.equal(response.headers.get('etag'), null, `${pathname} 不应返回 ETag，避免 304 旧内容`);
+      assert.deepEqual(await response.json(), {
+        version: 'v8.1.2',
+        deliveredAt: '2026-11-20 06:59',
+        source: 'override',
+      });
     }
   });
 });
 
-test('版本与交付时间随首屏 HTML 服务端输出，无需等待脚本即可被验收定位', () => {
-  const html = read('web/index.html');
-  assert.equal((html.match(/data-testid="app-version"/g) || []).length, 1, '版本号节点必须唯一，避免定位歧义');
-  assert.ok(html.includes('__APP_VERSION_LABEL__'), '模板应保留版本文案占位符');
-  assert.ok(html.includes('id="app-version"'), '版本号应提供稳定 id');
-
-  const rendered = renderIndexHtml(html, {
-    basePath: '/apps/p1',
-    version: 'v1.2.3',
-    deliveryTime: '2026-11-19 10:45',
-  });
-  assert.match(
-    rendered,
-    /data-testid="app-version"[\s\S]*当前版本：v1\.2\.3 · 交付时间：2026-11-19 10:45<\/span>/
-  );
-  assert.ok(!rendered.includes('__APP_VERSION_LABEL__'));
-  assert.equal((rendered.match(/data-testid="app-version"/g) || []).length, 1);
-
-  // 本次交付的默认渲染结果：v13 + 2026-11-19 10:45（与交付记录一致）。
-  const delivery = renderIndexHtml(html, {
-    basePath: '/apps/p1',
-    version: resolveVersion({}, null),
-    deliveryTime: resolveDeliveryTime({}, null),
-  });
-  assert.match(
-    delivery,
-    /data-testid="app-version"[^>]*>当前版本：v13 · 交付时间：2026-11-19 10:45<\/span>/,
-    '首屏版本区域应展示 v13 与到分钟的交付时间'
-  );
-  assert.equal((delivery.match(/data-testid="app-version"/g) || []).length, 1);
-  for (const stale of ['v12', 'v11', 'v10', 'v8', 'v7']) {
-    assert.ok(!delivery.includes(`当前版本：${stale}`), `页面不得再展示过期版本 ${stale}`);
+test('首屏 HTML 输出当前版本与时间，HTML 本身禁止缓存', async () => {
+  // 单元测试可能在 npm run build 之前执行；构建产物存在时再做真实 HTTP 首屏检查，
+  // 构建后的完整首屏检查由 npm run smoke / browser-check 覆盖。
+  if (!fs.existsSync(path.join(root, 'dist/index.html'))) {
+    const html = renderIndexHtml(read('web/index.html'), {
+      basePath: '/apps/p1',
+      version: 'v15',
+      deliveryTime: '2026-11-20 06:59',
+    });
+    assert.match(
+      html,
+      /data-testid="app-version"[^>]*>当前版本：v15 · 交付时间：2026-11-20 06:59<\/span>/
+    );
+    return;
   }
-
-  // 版本文案节点内部不能再嵌套元素：自动化验收常用 elementFromPoint 判断元素是否被遮挡，
-  // 若中心点命中的是 <strong> 等子元素，会把可见的版本文案误判为不可见。
-  const tag = rendered.match(/<span[^>]*data-testid="app-version"[^>]*>([\s\S]*?)<\/span>/);
-  assert.ok(tag, '应能定位版本号节点');
-  assert.ok(!/<\/?[a-zA-Z][^>]*>/.test(tag[1]), `版本号节点内应为纯文本，实际「${tag[1].trim()}」`);
-
-  const app = read('web/src/App.jsx');
-  assert.ok(!/当前版本：v\d+\.\d+\.\d+/.test(app), '页面不应硬编码固定版本号');
-  assert.ok(!app.includes('data-testid="app-version"'), 'React 不再重复渲染版本节点');
+  await withServer({ version: 'v15', deliveryTime: '2026-11-20 06:59' }, async (base) => {
+    for (const url of [`${base}/`, `${base}/apps/p1/`]) {
+      const response = await fetch(url);
+      assert.equal(response.status, 200);
+      assert.match(response.headers.get('cache-control') || '', /no-store/);
+      const html = await response.text();
+      assert.match(html, /window\.__APP_VERSION__ = "v15";/);
+      assert.match(
+        html,
+        /data-testid="app-version"[^>]*>当前版本：v15 · 交付时间：2026-11-20 06:59<\/span>/
+      );
+      assert.ok(!html.includes('__APP_VERSION_LABEL__'));
+      assert.ok(!/当前版本[:：]\s*v1[0-4]/.test(html), '不得展示上一版旧版本');
+    }
+  });
 });
 
-test('下一次交付注入新版本后，首屏、/health 与 /version 同步跟随，不再慢一版', async () => {
-  const template = read('web/index.html');
-  const next = resolveDeliveryInfo({ APP_VERSION: 'v14', APP_DELIVERY_TIME: '2026-11-20 09:10' }, null);
-  const html = renderIndexHtml(template, {
+test('版本信息获取异常时页面不显示过期版本，并有可识别提示', () => {
+  const html = renderIndexHtml(read('web/index.html'), {
     basePath: '/apps/p1',
-    version: next.version,
-    deliveryTime: next.deliveredAt,
+    version: '',
+    deliveryTime: '',
   });
   assert.match(
     html,
-    /data-testid="app-version"[^>]*>当前版本：v14 · 交付时间：2026-11-20 09:10<\/span>/,
-    '首屏应展示本次交付的新版本'
+    /data-testid="app-version"[^>]*>版本信息获取中…<\/span>/,
+    '首屏应显示「版本信息获取中」而不是旧版本'
   );
-  assert.ok(!html.includes('当前版本：v13'), '首屏不应再停留在上一版 v13');
+  assert.ok(!/当前版本[:：]\s*v1[0-9]/.test(html));
 
-  await withServer({ version: 'v14', deliveryTime: '2026-11-20 09:10' }, async (base) => {
-    const health = await (await fetch(`${base}/health`)).json();
-    assert.equal(health.version, 'v14');
-    assert.equal(health.deliveredAt, '2026-11-20 09:10');
-    const version = await (await fetch(`${base}/version`)).json();
-    assert.equal(version.version, 'v14');
-    assert.equal(version.deliveredAt, '2026-11-20 09:10');
+  assert.equal(ERROR_LABEL, '版本信息获取失败，请刷新重试');
+  assert.equal(formatClientVersionLabel('', ''), '版本信息获取中…');
+  assert.throws(() => parseDeliveryPayload({ version: '', deliveredAt: '' }));
+  assert.throws(() => parseDeliveryPayload({ version: 'v15', deliveredAt: '2026/11/20 06:59' }));
+  assert.deepEqual(parseDeliveryPayload({ version: 'v15', deliveredAt: '' }), {
+    version: 'v15',
+    deliveredAt: '',
   });
 });
 
-test('部署挂载的交付记录替换后刷新即生效，无需重启或重建（下一次交付自动跟随）', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wensi-delivery-'));
-  const file = path.join(dir, 'delivery.json');
-  const previous = process.env.APP_DELIVERY_FILE;
+test('运行实例启动时间稳定，并按版本/构建时间隔离不同部署', () => {
+  const dir = tempDir('wensi-clock-');
+  const file = path.join(dir, 'started.json');
   try {
-    fs.writeFileSync(file, JSON.stringify({ version: 'v14', deliveredAt: '2026-11-20 09:10' }));
-    process.env.APP_DELIVERY_FILE = file;
-
-    assert.equal(resolveDeliveryMetaPath(process.env), file);
-    assert.deepEqual(resolveDeliveryInfo(process.env, null), {
-      version: 'v14',
-      deliveredAt: '2026-11-20 09:10',
-      source: 'deployment',
-    });
-
-    await withServer({}, async (base) => {
-      const first = renderIndexHtml(read('web/index.html'), {
-        version: resolveVersion(process.env),
-        deliveryTime: resolveDeliveryTime(process.env),
-      });
-      assert.match(first, /当前版本：v14 · 交付时间：2026-11-20 09:10<\/span>/);
-      assert.equal((await (await fetch(`${base}/health`)).json()).version, 'v14');
-
-      // 下一次交付：部署方只替换挂载文件，进程不重启，刷新即应显示新版本。
-      fs.writeFileSync(file, JSON.stringify({ version: 'v15', deliveredAt: '2026-11-20 11:30' }));
-      const second = renderIndexHtml(read('web/index.html'), {
-        version: resolveVersion(process.env),
-        deliveryTime: resolveDeliveryTime(process.env),
-      });
-      assert.match(
-        second,
-        /当前版本：v15 · 交付时间：2026-11-20 11:30<\/span>/,
-        '刷新后应自动跟随最新交付版本'
-      );
-      assert.ok(!second.includes('当前版本：v14'), '不应停留在上一次交付版本');
-      const health = await (await fetch(`${base}/health`)).json();
-      assert.equal(health.version, 'v15');
-      assert.equal(health.deliveredAt, '2026-11-20 11:30');
-      const version = await (await fetch(`${base}/apps/p1/version`)).json();
-      assert.deepEqual(version, { version: 'v15', deliveredAt: '2026-11-20 11:30', source: 'deployment' });
-    });
-
-    // 挂载文件损坏时页面仍可读，回退到仓库交付记录，不会 500。
-    fs.writeFileSync(file, '{ not-json');
-    assert.equal(resolveVersion(process.env), 'v13', '记录损坏时应回退到仓库交付记录');
-    await withServer({}, async (base) => {
-      assert.equal((await fetch(`${base}/health`)).status, 200);
-    });
+    // 预置一个属于其他构建的时间，确认不会被当前实例误用。
+    fs.writeFileSync(
+      file,
+      `${JSON.stringify({ key: 'other|build', deliveredAt: '2000-01-01 00:00' })}\n`
+    );
+    const env = { DELIVERY_STARTED_AT_FILE: file, APP_STARTED_AT: '' };
+    const build = { version: 'v15', deliveredAt: '', builtAt: '2026-11-20T06:58:50.000Z' };
+    const first = runtimeStartedAt(build, env);
+    const second = runtimeStartedAt(build, env);
+    assert.equal(first, second, '同一实例重复请求时间应稳定');
+    assert.notEqual(first, '2000-01-01 00:00', '不得读取其他构建的启动时间');
+    assert.match(first, /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/);
   } finally {
-    if (previous === undefined) delete process.env.APP_DELIVERY_FILE;
-    else process.env.APP_DELIVERY_FILE = previous;
     fs.rmSync(dir, { recursive: true, force: true });
   }
+
+  assert.match(formatDeliveryTimestamp(new Date('2026-11-20T06:59:32Z')), /^2026-11-20 06:59$/);
 });
 
-test('构建与部署配置读取同一份交付记录：vite 产出 version.json，Dockerfile 复制 delivery.json', () => {
-  const vite = read('web/vite.config.js');
-  assert.ok(vite.includes('version.json'));
-  assert.ok(vite.includes('__APP_VERSION_LABEL__'), '构建阶段应把版本文案写入首屏 HTML');
-  assert.ok(vite.includes('resolveDeliveryInfo'), '构建阶段应一次性解析版本与交付时间');
-  assert.ok(vite.includes('APP_VERSION'), '构建阶段应支持 APP_VERSION 注入');
-  assert.ok(vite.includes('deliveredAt'), 'version.json 应记录交付时间');
-  assert.ok(!vite.includes('resolveDeliveryTime'), '不应再分别解析版本与时间，避免两者不同步');
+test('构建与部署配置：版本自动生成、Dockerfile 复制脚本并禁用缓存', () => {
+  const pkg = JSON.parse(read('package.json'));
+  assert.equal(pkg.scripts.prebuild, 'node scripts/delivery-index.mjs');
+  assert.match(pkg.scripts.build, /vite build/);
 
   const dockerfile = read('Dockerfile');
-  assert.ok(/ARG\s+APP_VERSION/.test(dockerfile), 'Dockerfile 应接受 APP_VERSION 构建参数');
-  assert.ok(/ARG\s+APP_DELIVERY_TIME/.test(dockerfile), 'Dockerfile 应接受 APP_DELIVERY_TIME 构建参数');
-  assert.ok(dockerfile.includes('APP_DELIVERY_FILE'), 'Dockerfile 应说明部署挂载交付记录的方式');
-  assert.ok(/COPY\s+server\s+\.\/server/.test(dockerfile), '构建阶段需复制 server（vite 读取版本模块）');
-  assert.ok(
-    (dockerfile.match(/COPY\s+delivery\.json\s+\.\/delivery\.json/g) || []).length >= 2,
-    '构建与运行阶段都应复制交付记录 delivery.json'
-  );
+  assert.match(dockerfile, /COPY\s+scripts\s+\.\/scripts/, '构建阶段必须复制自动版本脚本');
+  assert.match(dockerfile, /EXPOSE\s+8080/);
+  assert.match(dockerfile, /ENV\s+PORT=8080/);
+  assert.match(dockerfile, /COPY\s+.*dist/);
+  assert.match(dockerfile, /HEALTHCHECK/);
 
-  const envExample = read('.env.example');
-  assert.ok(envExample.includes('APP_VERSION'));
-  assert.ok(envExample.includes('APP_DELIVERY_TIME'));
-  assert.ok(envExample.includes('APP_DELIVERY_FILE'));
-  assert.ok(envExample.includes('2026-11-19 10:45'), '.env.example 的示例时间应与本次交付一致');
+  const indexHtml = read('web/index.html');
+  assert.equal((indexHtml.match(/data-testid="app-version"/g) || []).length, 1);
+  assert.ok(indexHtml.includes('__APP_VERSION_LABEL__'));
+
+  const app = read('web/src/App.jsx');
+  assert.ok(!app.includes('data-testid="app-version"'), 'React 不重复渲染版本节点');
+
+  const versionSource = read('server/version.js');
+  assert.ok(!/['"]v1[0-4]['"]/.test(versionSource), '服务端不得硬编码历史版本号');
+  assert.ok(versionSource.includes('runtimeStartedAt'), '交付时间应取运行实例启动时间');
+
+  const smoke = read('scripts/smoke.mjs');
+  assert.ok(smoke.includes('/version.json'), '冒烟必须检查版本接口');
+});
+
+test('版本接口返回空数据时前端仍可识别为异常，而不是渲染空版本', () => {
+  assert.equal(formatClientVersionLabel('', ''), '版本信息获取中…');
+  assert.equal(formatClientVersionLabel('v15', ''), '当前版本：v15 · 交付时间获取失败');
+  assert.throws(() => parseDeliveryPayload(null));
+  assert.throws(() => parseDeliveryPayload([]));
+  assert.deepEqual(parseDeliveryPayload({ version: 'v15', deliveredAt: '2026-11-20 06:59' }), {
+    version: 'v15',
+    deliveredAt: '2026-11-20 06:59',
+  });
 });

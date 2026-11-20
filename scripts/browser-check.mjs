@@ -14,13 +14,14 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { resultToText } from '../web/src/exportText.js';
-import { formatVersionLabel, resolveDeliveryTime, resolveVersion } from '../server/version.js';
+import { formatVersionLabel } from '../server/version.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const results = [];
-const expectedVersion = resolveVersion(process.env);
-const expectedDeliveryTime = resolveDeliveryTime(process.env);
-const expectedLabel = formatVersionLabel(expectedVersion, expectedDeliveryTime);
+// 期望值由真实启动的服务返回，避免验收脚本自己写死版本。
+let expectedVersion = '';
+let expectedDeliveryTime = '';
+let expectedLabel = '';
 
 /** 浏览器工具本身不可用（与应用缺陷无关）时，允许降级到真实 HTTP 校验。 */
 class BrowserInfraError extends Error {}
@@ -449,6 +450,17 @@ async function runCdp(chrome, base, cdpPort, profile) {
       };
 
       const first = await readVersion();
+      // 等待前端从 /version.json 同步完成，证明页面打开时确实读取了运行时来源，
+      // 而不是只依赖首屏 HTML 中可能过期的文本。
+      await waitFor(
+        "document.querySelector('[data-testid=\"app-version\"]')?.dataset.versionState === 'ready'",
+        '版本接口同步完成'
+      );
+      const synced = await readVersion();
+      assert.equal(synced.text, first.text, '版本接口同步后应与首屏显示一致');
+      const endpoint = await (await fetch(`${base}/apps/p1/version.json`)).json();
+      assert.equal(endpoint.version, expectedVersion, '版本接口应返回当前运行实例版本');
+      assert.equal(endpoint.deliveredAt, expectedDeliveryTime, '版本接口应返回当前运行实例交付时间');
       assertLayout(first, '桌面端');
       assert.equal(
         first.text,
@@ -488,6 +500,29 @@ async function runCdp(chrome, base, cdpPort, profile) {
         );
       }
       await send('Emulation.clearDeviceMetricsOverride').catch(() => {});
+    });
+
+    await check('浏览器：版本接口不可达时显示可识别提示且不展示旧版本', async () => {
+      await enableRequestBlocking([{ urlPattern: '*version.json*', requestStage: 'Request' }], 'fail');
+      try {
+        await send('Page.navigate', { url: `${base}/apps/p1/` });
+        await waitFor(
+          "document.querySelector('[data-testid=\"app-version\"]')?.dataset.versionState === 'error'",
+          '版本获取失败提示'
+        );
+        const text = await evaluate(
+          "document.querySelector('[data-testid=\"app-version\"]').innerText.trim()"
+        );
+        assert.equal(text, '版本信息获取失败，请刷新重试');
+        assert.ok(!text.includes('当前版本：'), '获取失败时不得展示任何版本号');
+      } finally {
+        await send('Fetch.disable').catch(() => {});
+        await send('Page.navigate', { url: `${base}/apps/p1/` });
+        await waitFor(
+          "document.querySelector('[data-testid=\"app-version\"]')?.dataset.versionState === 'ready'",
+          '恢复版本同步'
+        );
+      }
     });
 
     // 验收方可能在脚本执行完成前就检查元素；版本号必须由服务端直接输出到首屏 HTML。
@@ -779,7 +814,8 @@ async function runCdp(chrome, base, cdpPort, profile) {
       await waitFor("document.querySelectorAll('a.prompt-card').length === 9", '非法年份不隐藏题目');
 
       await evaluate("location.hash='#/'; location.reload(); true");
-      await waitFor("document.body.innerText.includes('真题题库')", '返回真题题库');
+      // 等待题库真正渲染完成再进入下一项，避免只看到页头文案就开始点击卡片。
+      await waitFor("document.querySelectorAll('a.prompt-card').length === 9", '返回真题题库');
     });
 
     await check('浏览器：进入 2024 真题详情，查看立意与提纲', async () => {
@@ -1716,6 +1752,13 @@ async function main() {
   const { child, base } = await startServer();
   let mode = chrome ? 'Chrome 无头模式 + CDP 交互' : 'HTTP 降级校验';
   try {
+    // 以运行实例返回的版本与时间为唯一期望值。
+    const health = await (await fetch(`${base}/health`)).json();
+    expectedVersion = health.version;
+    expectedDeliveryTime = health.deliveredAt;
+    expectedLabel = formatVersionLabel(expectedVersion, expectedDeliveryTime);
+    assert.match(expectedVersion, /^v[0-9A-Za-z]/, '运行实例应返回有效版本号');
+    assert.match(expectedDeliveryTime, /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/, '运行实例应返回到分钟的交付时间');
     if (!chrome) {
       console.log('[browser] 未检测到 Chrome，执行 HTTP 层降级验证（非占位）：');
       await httpFallback(base);

@@ -138,11 +138,13 @@ function escapeHtml(value) {
  * 这样页面无需等待前端脚本执行即可展示版本与交付时间，且刷新后保持一致。
  */
 export function renderIndexHtml(template, { basePath = '', version = '', deliveryTime = '' } = {}) {
-  // 版本记录缺失时 formatVersionLabel 返回「版本信息未知」，不回退到上一版旧值。
-  const label = formatVersionLabel(version, deliveryTime);
+  // 版本号会写入内联脚本与正文，先规范化，避免任何标记/脚本注入。
+  const safeVersion = normalizeVersion(version);
+  // 版本记录缺失时 formatVersionLabel 返回「版本信息获取中」，不回退到上一版旧值。
+  const label = formatVersionLabel(safeVersion, deliveryTime);
   return String(template)
     .replace(BASE_PLACEHOLDER, JSON.stringify(basePath))
-    .replace(VERSION_PLACEHOLDER, JSON.stringify(version))
+    .replace(VERSION_PLACEHOLDER, JSON.stringify(safeVersion))
     .replaceAll(VERSION_LABEL_PLACEHOLDER, escapeHtml(label));
 }
 
@@ -162,8 +164,7 @@ function serveIndex(req, res, version, deliveryTime, status = 200) {
   const rendered = renderIndexHtml(html, { basePath: resolveBase(req), version, deliveryTime });
   // 页面内嵌部署版本与基础路径，任何一层缓存陈旧都会让刷新后看到旧版本号，
   // 因此 HTML 一律不缓存；静态资源仍使用文件名指纹与长缓存。
-  res.setHeader('Cache-Control', 'no-store, max-age=0');
-  res.setHeader('Pragma', 'no-cache');
+  setNoStore(res);
   res.setHeader('Vary', 'X-Forwarded-Prefix');
   return res.status(status).type('html').send(rendered);
 }
@@ -187,11 +188,21 @@ function health(getDeliveryInfo) {
 /**
  * 交付信息接口：与页面首屏、/health 共用同一条交付记录，
  * 便于部署后的自动化核对版本号与交付时间是否已跟随本次交付。
+ *
+ * version.json 是前端运行时读取的单一来源：必须禁止任何一层缓存，
+ * 否则反向代理/CDN 可能继续返回上一版，重现「慢一版」问题。
  */
+function setNoStore(res) {
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
+  res.setHeader('Surrogate-Control', 'no-store');
+}
+
 function versionInfo(getDeliveryInfo) {
   return (_req, res) => {
     const { version, deliveredAt, source } = getDeliveryInfo();
-    res.setHeader('Cache-Control', 'no-store, max-age=0');
+    setNoStore(res);
     return res.status(200).json({ version, deliveredAt, source });
   };
 }
@@ -325,9 +336,10 @@ export function createApp(options = {}) {
     : null;
   // 每次请求都重新解析：部署方替换注入值或挂载的交付记录后，刷新页面即可跟随新版本，
   // 无需重启进程，也不会停留在构建时读到的上一次交付版本。
+  const runtimeEnv = options.env || process.env;
   const currentDelivery = () => {
     if (overrideInfo) return overrideInfo;
-    const info = resolveDeliveryInfo();
+    const info = resolveDeliveryInfo(runtimeEnv);
     return {
       version: normalizeVersion(info.version),
       deliveredAt: normalizeDeliveryTime(info.deliveredAt),
@@ -336,6 +348,8 @@ export function createApp(options = {}) {
   };
   const app = express();
   app.disable('x-powered-by');
+  // 版本与 HTML 必须每次返回最新内容，不参与 ETag 协商缓存。
+  app.disable('etag');
 
   // 请求体大小限制：防止超大输入，也保证超长题目能进入业务校验而非直接 413。
   app.use(express.json({ limit: '128kb', strict: true }));
@@ -350,8 +364,15 @@ export function createApp(options = {}) {
 
   app.get('/health', health(currentDelivery));
   app.get('/apps/p1/health', health(currentDelivery));
-  app.get('/version', versionInfo(currentDelivery));
-  app.get('/apps/p1/version', versionInfo(currentDelivery));
+  // 版本接口同时提供无扩展名与 JSON 文件形式，兼容不同代理/验收脚本的读取方式。
+  for (const pathname of [
+    '/version',
+    '/version.json',
+    '/apps/p1/version',
+    '/apps/p1/version.json',
+  ]) {
+    app.get(pathname, versionInfo(currentDelivery));
+  }
 
   for (const prefix of API_PREFIXES) {
     app.use(prefix, api);

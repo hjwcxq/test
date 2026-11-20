@@ -29,8 +29,14 @@ assert.match(dockerfile, /EXPOSE\s+8080/, '必须暴露 8080');
 assert.match(dockerfile, /USER\s+(?!root\b)[A-Za-z0-9_-]+/, '必须以非 root 用户运行');
 assert.match(dockerfile, /CMD\s+\[?\s*"node"\s*,\s*"server\/index\.js"/, 'CMD 必须启动 node server/index.js');
 assert.match(dockerfile, /npm\s+run\s+build/, '构建阶段必须构建前端产物');
+assert.match(dockerfile, /COPY\s+scripts\s+\.\/scripts/, '构建阶段必须复制自动版本脚本');
 assert.match(dockerfile, /--omit=dev|npm\s+ci\s+--omit=dev|NODE_ENV=production/, '运行阶段应只安装生产依赖');
 assert.match(dockerfile, /COPY\s+.*dist/, '运行阶段必须复制前端构建产物');
+assert.match(
+  dockerfile,
+  /COPY\s+--from=builder\s+\/app\/delivery\.json\s+\.\/delivery\.json/,
+  '运行阶段必须复用构建阶段自动生成的交付记录'
+);
 assert.match(dockerfile, /COPY\s+data\s+\.\/data/, '运行阶段必须复制 data 目录（含江苏、浙江题库）');
 assert.match(dockerfile, /ENV\s+PORT=8080/, '容器默认端口必须是 8080');
 assert.match(dockerfile, /HEALTHCHECK/, '应声明 HEALTHCHECK');
